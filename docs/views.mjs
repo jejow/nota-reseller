@@ -60,8 +60,8 @@ const brand = () => `<button class="brand" type="button" data-action="nav" data-
   <span class="brand-mark">${icon('receipt')}</span><span class="brand-text">Nota Reseller<small>Panel penjualan</small></span>
 </button>`;
 
-const syncedLink = (url, label = 'Versi sinkron') =>
-  `<a class="btn btn-outline btn-sm sync-link" href="${esc(url)}">${icon('link')}${label}</a>`;
+const syncedLink = (url, label = 'Versi sinkron', style = 'btn-outline btn-sm sync-link') =>
+  `<a class="btn ${style}" href="${esc(url)}">${icon('link')}${label}</a>`;
 
 export function syncControl(sync) {
   if (sync.mode === 'local') return syncedLink(sync.url);
@@ -191,10 +191,21 @@ function packageCard(report, state, withProfit = false) {
     </div></section>`;
 }
 
-const hero = () => `<section class="hero"><div class="hero-content">
-  <h2>Invoice siap kirim dalam hitungan detik.</h2>
-  <p>Tempel data akun atau unggah file. Pilih paket garansi, cek pesan, lalu salin untuk pelanggan.</p>
-  <div class="actions">${btn('Buat invoice', 'plus', 'new-invoice', 'hero-primary')}${btn('Klaim garansi', 'shield', 'new-claim', 'hero-secondary')}</div>
+function hero(sync) {
+  const local = sync?.mode === 'local';
+  const title = local ? 'Satu pembukuan di HP dan PC' : 'Invoice siap kirim dalam hitungan detik.';
+  const subtitle = local
+    ? 'Gunakan akun ChatGPT yang sama untuk membuka invoice, klaim garansi, dan laporan dari perangkat lain.'
+    : 'Tempel data akun atau unggah file. Pilih paket garansi, cek pesan, lalu salin untuk pelanggan.';
+  const actions = local
+    ? syncedLink(sync.url, 'Buka versi sinkron', 'btn-hero-primary') +
+      btn('Buat invoice lokal', 'plus', 'new-invoice', 'hero-secondary')
+    : btn('Buat invoice', 'plus', 'new-invoice', 'hero-primary') +
+      btn('Klaim garansi', 'shield', 'new-claim', 'hero-secondary');
+  return `<section class="hero"><div class="hero-content">
+  <h2>${title}</h2>
+  <p>${subtitle}</p>
+  <div class="actions">${actions}</div>
 </div><div class="hero-art" aria-hidden="true">
   <div class="orbit"></div><div class="paper-receipt receipt-back"></div>
   <div class="paper-receipt receipt-front"><div class="paper-logo"><span>${icon('receipt')}</span>INVOICE</div>
@@ -202,6 +213,7 @@ const hero = () => `<section class="hero"><div class="hero-content">
   </div><span class="paper-badge">${icon('checkCircle')}Garansi aktif</span>
   <span class="paper-spark">${icon('spark')}</span><span class="paper-spark small">${icon('spark')}</span>
 </div></section>`;
+}
 
 function paymentBadge(invoice) {
   const label = paymentLabel(invoice);
@@ -241,10 +253,14 @@ function invoiceRows(rows, compact = false) {
       .join('')}</tbody></table></div>`;
 }
 
-export function dashboard(state, report, ui) {
+export function dashboard(state, report, ui, sync) {
   const recent = [...state.invoices].sort(sortRecords).slice(0, 5);
-  return `${pageHead('Ringkasan usaha', 'Pantau penjualan dan laba usaha reseller Anda.', periodFields(ui))}
-    ${hero()}${metrics(report)}
+  const subtitle =
+    sync?.mode === 'local'
+      ? 'Lihat transaksi yang tersimpan di browser ini.'
+      : 'Pantau penjualan dan laba usaha reseller Anda.';
+  return `${pageHead('Ringkasan usaha', subtitle, periodFields(ui))}
+    ${hero(sync)}${metrics(report)}
     ${report.totals.missing ? banner('Lengkapi modal di invoice lunas agar laba dihitung dengan biaya supplier yang benar.', 'amber') : ''}
     <div class="section-grid">${chartCard(report)}${packageCard(report, state)}</div>
     <section class="card table-card"><div class="card-head"><div><h2>Invoice terbaru</h2><p>Transaksi yang baru dicatat</p></div>

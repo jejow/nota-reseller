@@ -52,7 +52,7 @@ Kata sandi, 2FA, tautan verifikasi, dan draf pesan hanya ada selama sesi halaman
 
 [Buka Nota Reseller](https://jejow.github.io/nota-reseller/)
 
-Situs dipublikasikan dari folder `docs` pada branch `main`. Header **Versi sinkron** membuka pembukuan berbasis database.
+Situs dipublikasikan dari folder `docs` pada branch `main`. Pilih **Buka versi sinkron** dari halaman utama untuk membuka pembukuan berbasis database.
 
 Versi sinkron dibangun dari sumber yang sama dengan `npm ci` dan `npm run build:cloud`. Worker membutuhkan autentikasi ChatGPT Sites dan binding D1 bernama `DB`. Skema SQL berada di folder `drizzle`.
 

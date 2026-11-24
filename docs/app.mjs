@@ -40,7 +40,7 @@ import {
   settingsView,
   syncControl,
   templateFields,
-} from './views.mjs';
+} from './views.mjs?v=sync-home';
 import { mountChart } from './chart.mjs';
 import { CLOUD_URL, SyncError, createSyncedLedger } from './sync.mjs';
 
@@ -283,7 +283,7 @@ function render() {
     const snapshot = report();
     if (ui.view === 'finance') viewContainer.innerHTML = financeView(state, snapshot, ui);
     else {
-      viewContainer.innerHTML = dashboard(state, snapshot, ui);
+      viewContainer.innerHTML = dashboard(state, snapshot, ui, sync);
       const chart = $('#trend-chart');
       if (chart) closeChart = mountChart(chart, $('#chart-tooltip'), trendPoints(snapshot.events, range()));
     }
