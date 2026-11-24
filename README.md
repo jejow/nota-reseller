@@ -4,11 +4,12 @@ Panel JUU untuk membuat invoice, mencatat klaim garansi, dan memantau laba resel
 
 ## Mulai memakai
 
-1. Pilih **Data contoh → Mulai pakai** untuk membuka pembukuan kosong.
-2. Buka **Pengaturan** untuk melengkapi identitas toko, instruksi pembayaran, panduan akses, dan biaya modal default. Harga awal **Garansi 3 Hari Rp80.000** dan **Full Garansi Rp120.000** per akun.
-3. Buka **Buat invoice**. Unggah satu order atau tempel data akun. Periksa detail akun, tanggal, jumlah, paket, dan modal rupiah. Pilih **Lunas** ketika pembayaran dari pelanggan diterima.
-4. Pilih **Simpan invoice** untuk mencatat transaksi dan mengunci nomor invoice. Gunakan **Salin pesan**, **TXT**, atau **Cetak / PDF** untuk menyimpan pesan pelanggan dalam format yang Anda butuhkan.
-5. Gunakan **Klaim garansi** untuk menghubungkan invoice tersimpan atau memasukkan nomor invoice lama. Isi keluhan, status, dan biaya jika ada. Unggah akun pengganti dengan cara yang sama, lalu salin pesan klaim.
+Pembukuan baru dimulai dari Rp0. Ringkasan memakai transaksi yang Anda catat di browser ini.
+
+1. Buka **Pengaturan** untuk melengkapi identitas toko, instruksi pembayaran, panduan akses, dan biaya modal default. Harga awal **Garansi 3 Hari Rp80.000** dan **Full Garansi Rp120.000** per akun.
+2. Buka **Buat invoice**. Unggah satu order atau tempel data akun. Periksa detail akun, tanggal, jumlah, paket, dan modal rupiah. Pilih **Lunas** ketika pembayaran dari pelanggan diterima.
+3. Pilih **Simpan invoice** untuk mencatat transaksi dan mengunci nomor invoice. Gunakan **Salin pesan**, **TXT**, atau **Cetak / PDF** untuk menyimpan pesan pelanggan dalam format yang Anda butuhkan.
+4. Gunakan **Klaim garansi** untuk menghubungkan invoice tersimpan atau memasukkan nomor invoice lama. Isi keluhan, status, dan biaya jika ada. Unggah akun pengganti dengan cara yang sama, lalu salin pesan klaim.
 
 ## Format impor
 
@@ -23,7 +24,9 @@ Panel JUU untuk membuat invoice, mencatat klaim garansi, dan memantau laba resel
 
 **Pengaturan → Template pesan** memiliki tab Invoice dan Klaim garansi. Klik variabel seperti `{{nomor}}` dan `{{bagian_akun}}` untuk memasukkannya ke template. **Edit pesan ini** berlaku untuk pesan yang sedang dibuka.
 
-Nomor invoice awal mengikuti format `JUU-YYMMDD-053`. Garansi 3 Hari berakhir tiga hari setelah tanggal pembayaran. Full Garansi mengikuti masa aktif paket, dengan opsi menetapkan tanggal akhir di invoice atau durasi default di Pengaturan.
+Invoice baru memakai tanggal hari ini menurut WIB. Di **Mode tanggal invoice**, pilih **Manual** untuk memilih tanggal sendiri. Jika file memuat tanggal supplier, gunakan **Gunakan tanggal supplier** untuk mengisinya.
+
+Nomor invoice awal mengikuti format `JUU-YYMMDD-053`, dengan tanggal sesuai pilihan saat pertama disimpan. Garansi 3 Hari berakhir tiga hari setelah tanggal pembayaran. Full Garansi mengikuti masa aktif paket, dengan opsi menetapkan tanggal akhir di invoice atau durasi default di Pengaturan.
 
 ## Cara laporan menghitung laba
 

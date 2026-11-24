@@ -1,7 +1,6 @@
 import {
   STORAGE_KEY,
   createState,
-  exampleState,
   today,
   validDate,
   formatDate,
@@ -49,7 +48,6 @@ const locationView = () => (views.includes(location.hash.slice(1)) ? location.ha
 const viewContainer = $('#view');
 const modal = $('#modal');
 const initialDate = today();
-const sample = exampleState(initialDate);
 const ui = {
   view: locationView(),
   period: 'month',
@@ -67,13 +65,9 @@ const ui = {
 
 let storageProblem = '';
 let state = createState();
-let demo = true;
 try {
   const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    state = readBackup(JSON.parse(saved));
-    demo = false;
-  }
+  if (saved) state = readBackup(JSON.parse(saved));
 } catch {
   storageProblem = 'Penyimpanan browser tidak dapat dibaca. Periksa izin penyimpanan atau impor cadangan.';
 }
@@ -127,6 +121,7 @@ function blankDraft(type, data = state) {
     };
   return {
     ...shared,
+    dateMode: 'auto',
     supplierRef: '',
     supplierAmount: '',
     supplierDate: '',
@@ -148,9 +143,8 @@ function blankDraft(type, data = state) {
 
 const editType = () => (ui.view === 'invoice' || ui.view === 'claim' ? ui.view : '');
 const currentDraft = () => (editType() ? drafts[editType()] : null);
-const displayState = () => (demo ? sample : state);
 const range = () => dateRange(ui.period, ui.periodStart, ui.periodEnd);
-const report = () => financialReport(displayState(), range());
+const report = () => financialReport(state, range());
 
 function toast(message, error = false) {
   const target = $('#toast');
@@ -180,7 +174,6 @@ async function persist(transform, recover = false) {
       throw new Error('Gagal menyimpan. Periksa izin dan kapasitas penyimpanan browser.');
     }
     state = next;
-    demo = false;
     storageProblem = '';
     return value;
   };
@@ -188,7 +181,7 @@ async function persist(transform, recover = false) {
 }
 
 function renderChrome() {
-  const shell = chrome(ui.view, state, demo);
+  const shell = chrome(ui.view, state);
   $('#sidebar').innerHTML = shell.sidebar;
   $('#topbar').innerHTML = shell.topbar;
   $('#bottom-nav').innerHTML = shell.bottom;
@@ -205,19 +198,19 @@ function render() {
     updateEditor(draft);
     return;
   }
-  const shown = displayState();
   if (ui.view === 'history') {
-    viewContainer.innerHTML = historyView(shown, ui);
+    viewContainer.innerHTML = historyView(state, ui);
   } else if (ui.view === 'settings') {
     settingsDraft ??= structuredClone(state.settings);
     viewContainer.innerHTML = settingsView(settingsDraft, ui.templateType);
     updateTemplatePreview();
   } else {
     const snapshot = report();
-    if (ui.view === 'finance') viewContainer.innerHTML = financeView(shown, snapshot, ui);
+    if (ui.view === 'finance') viewContainer.innerHTML = financeView(state, snapshot, ui);
     else {
-      viewContainer.innerHTML = dashboard(shown, snapshot, ui);
-      closeChart = mountChart($('#trend-chart'), $('#chart-tooltip'), trendPoints(snapshot.events, range()));
+      viewContainer.innerHTML = dashboard(state, snapshot, ui);
+      const chart = $('#trend-chart');
+      if (chart) closeChart = mountChart(chart, $('#chart-tooltip'), trendPoints(snapshot.events, range()));
     }
   }
 }
@@ -248,7 +241,6 @@ window.addEventListener('storage', (event) => {
   if (event.key !== STORAGE_KEY || !event.newValue) return;
   try {
     state = readBackup(JSON.parse(event.newValue));
-    demo = false;
     if (editType() || ui.view === 'settings') renderChrome();
     else render();
   } catch {
@@ -271,19 +263,6 @@ function confirm(title, message, label, action, danger = false) {
     title,
     '<p>' + esc(message) + '</p>',
     btn('Kembali', '', 'close-modal') + btn(label, '', 'confirm-modal', danger ? 'danger' : 'primary'),
-  );
-}
-
-function showDemo() {
-  confirm(
-    'Data contoh',
-    'Ringkasan ini memakai transaksi fiktif. Mulai pakai untuk membuka ruang kerja kosong dan mencatat order Anda sendiri.',
-    'Mulai pakai',
-    async () => {
-      await persist(() => {});
-      render();
-      toast('Ruang kerja siap dipakai.');
-    },
   );
 }
 
@@ -321,13 +300,13 @@ function setLinked(draft, invoice) {
 }
 
 function openRecord(type, id) {
-  if (demo) return showDemo();
   const kind = type === 'claim' ? 'claims' : 'invoices';
   const item = state[kind].find((record) => record.id === id);
   if (!item) return toast('Transaksi tidak ditemukan.', true);
   const open = () => {
     if (drafts[type]?.id !== id || !drafts[type]?.dirty) {
       drafts[type] = { ...blankDraft(type), ...item, ...sessionDocuments.get(id) };
+      if (type === 'invoice') drafts[type].dateMode = 'manual';
     }
     go(type);
   };
@@ -366,9 +345,30 @@ function syncEditorFields(draft) {
   });
 }
 
+function syncInvoiceDate(draft) {
+  const automatic = draft.dateMode === 'auto';
+  if (automatic) draft.date = today();
+  const field = $('[data-draft="date"]');
+  field.readOnly = automatic;
+  if (field.value !== draft.date) field.value = draft.date;
+}
+
+function refreshOpenInvoice() {
+  if (ui.view !== 'invoice') return;
+  const draft = drafts.invoice;
+  if (draft?.dateMode === 'auto' && draft.date !== today()) updateEditor(draft);
+}
+
+window.setInterval(refreshOpenInvoice, 30000);
+window.addEventListener('focus', refreshOpenInvoice);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshOpenInvoice();
+});
+
 function updateEditor(draft, refreshImport = false) {
   if (currentDraft() !== draft) return;
   const type = editType();
+  if (type === 'invoice') syncInvoiceDate(draft);
   const preview = $('#message-preview');
   if (preview) preview.textContent = output(type, draft);
   if (type === 'invoice') {
@@ -498,6 +498,7 @@ function checkRevision(existing, draft) {
 async function saveEditor(type, draft, allowDuplicate = false) {
   if (editorSaving) return;
   processRaw(type, draft);
+  if (type === 'invoice') syncInvoiceDate(draft);
   if (!$('#editor-form').reportValidity()) return;
   checkEditor(type, draft);
   if (
@@ -546,6 +547,7 @@ async function saveEditor(type, draft, allowDuplicate = false) {
       return clean;
     });
     Object.assign(draft, record, { dirty: false });
+    if (type === 'invoice') draft.dateMode = 'manual';
     sessionDocuments.set(
       record.id,
       Object.fromEntries(
@@ -631,6 +633,10 @@ function documentOutput(action) {
       draft.rawConflict ? 'Tempel data satu order sebelum membuat pesan.' : 'Tunggu file selesai dibaca.',
     );
   }
+  if (type === 'invoice') {
+    updateEditor(draft);
+    if (!validDate(draft.date)) throw new Error('Isi tanggal invoice sebelum membuat pesan.');
+  }
   const message = output(type, draft);
   if (!message.trim()) throw new Error('Pesan masih kosong.');
   const number = draft.number || nextNumber(state, type, draft.date).number;
@@ -642,7 +648,9 @@ function documentOutput(action) {
   if (action === 'download-message') download(number + '.txt', message, 'text/plain;charset=utf-8');
   if (action === 'print-message') {
     const title = type === 'claim' ? 'Klaim Garansi' : 'Invoice';
-    const text = message.replace(/^\*([^*\n]+)\*$/gm, '$1');
+    const text = message
+      .replace(/^\*([^*\n]+)\*$/gm, '$1')
+      .replace(/^(Total|Status): \*([^*\n]+)\*$/gm, '$1: $2');
     $('#print-page').innerHTML = `<div class="print-head"><h1>${esc(state.settings.business)} · ${title}</h1>
       <p>${esc(number)} · ${formatDate(draft.date)}</p></div><pre>${esc(text)}</pre>`;
     window.print();
@@ -654,7 +662,6 @@ window.addEventListener('afterprint', () => {
 });
 
 function openExpense(id = '') {
-  if (id && demo) return showDemo();
   expenseDraft = state.expenses.find((item) => item.id === id) ?? {
     id: '',
     name: '',
@@ -707,8 +714,8 @@ function updateTemplatePreview() {
   $('#template-validation').textContent = invalid.length
     ? 'Variabel tidak dikenal · ' + invalid.join(', ')
     : '';
-  const demoState = { ...state, settings: cleanSettings(settingsDraft) };
-  const draft = blankDraft(type, demoState);
+  const previewState = { ...state, settings: cleanSettings(settingsDraft) };
+  const draft = blankDraft(type, previewState);
   draft.customer = 'Pelanggan Contoh';
   draft.accounts = parseOrder(SAMPLE_TEXT).accounts;
   if (type === 'claim')
@@ -719,7 +726,7 @@ function updateTemplatePreview() {
     });
   else Object.assign(draft, { status: 'paid', paymentDate: draft.date });
   $('#template-preview').textContent = settingsDraft[key].trim()
-    ? composeMessage(type, draft, demoState)
+    ? composeMessage(type, draft, previewState)
     : 'Isi template untuk melihat hasilnya.';
 }
 
@@ -753,24 +760,19 @@ function exportCsv() {
     'Dampak laba (Rp)',
     'Modal lengkap',
   ];
-  const shown = displayState();
   const records = rows.map((e) => [
     e.date,
     e.label,
     e.reference,
     e.description,
-    shown.settings.packages[e.packageId]?.label || '',
+    state.settings.packages[e.packageId]?.label || '',
     e.revenue,
     e.cost ?? '',
     e.fee,
     e.revenue - (e.cost ?? 0) - e.fee,
     e.cost === null ? 'Belum' : 'Ya',
   ]);
-  download(
-    `${demo ? 'contoh-' : ''}keuangan-${today()}.csv`,
-    csvString([headers, ...records]),
-    'text/csv;charset=utf-8',
-  );
+  download(`keuangan-${today()}.csv`, csvString([headers, ...records]), 'text/csv;charset=utf-8');
   toast('Laporan CSV diunduh.');
 }
 
@@ -830,6 +832,7 @@ function readDraftField(el) {
     render();
   } else {
     draft[fieldName] = value;
+    if (fieldName === 'dateMode' && !validDate(draft.date)) draft.date = today();
     if (fieldName === 'status' && type === 'invoice') {
       if (value === 'paid') draft.paymentDate ||= today();
       else Object.assign(draft, { paymentDate: '', refund: 0, refundDate: '' });
@@ -856,7 +859,7 @@ function updateControl(el) {
   ui[key] = el.value;
   if (key.startsWith('history')) {
     ui.historyPage = 1;
-    $('#history-rows').innerHTML = historyRows(displayState(), ui);
+    $('#history-rows').innerHTML = historyRows(state, ui);
   } else if (key === 'ledgerKind') {
     ui.ledgerPage = 1;
     $('#ledger-rows').innerHTML = ledgerRows(report(), ui);
@@ -944,7 +947,6 @@ document.addEventListener('submit', async (event) => {
 
 const actions = {
   nav: (id) => go(id),
-  'demo-info': showDemo,
   'mobile-menu': () =>
     dialog(
       'Lainnya',
@@ -966,7 +968,6 @@ const actions = {
   'edit-invoice': (id) => openRecord('invoice', id),
   'edit-claim': (id) => openRecord('claim', id),
   'claim-for': (id) => {
-    if (demo) return showDemo();
     openNew(
       'claim',
       state.invoices.find((invoice) => invoice.id === id),
@@ -983,6 +984,7 @@ const actions = {
   'supplier-date': () => {
     const draft = currentDraft();
     if (!draft.supplierDate) return;
+    draft.dateMode = 'manual';
     draft.date = draft.supplierDate;
     draft.touched.add('date');
     draft.dirty = true;
@@ -1008,6 +1010,7 @@ const actions = {
   'edit-message': () => {
     const draft = currentDraft();
     processRaw(editType(), draft);
+    if (editType() === 'invoice') syncInvoiceDate(draft);
     if (!draft.editMessage) draft.customMessage = output(editType(), draft);
     draft.editMessage = !draft.editMessage;
     render();
@@ -1033,7 +1036,7 @@ const actions = {
   },
   'history-page': (id) => {
     ui.historyPage = Number(id);
-    $('#history-rows').innerHTML = historyRows(displayState(), ui);
+    $('#history-rows').innerHTML = historyRows(state, ui);
   },
   'ledger-page': (id) => {
     ui.ledgerPage = Number(id);

@@ -19,7 +19,10 @@ const shortDate = new Intl.DateTimeFormat('id-ID', {
 });
 
 export const money = (value) => `${value < 0 ? '−' : ''}Rp${rupiah.format(Math.abs(value || 0))}`;
-export const today = () => jakarta.format(new Date());
+export function today(now = new Date()) {
+  const parts = Object.fromEntries(jakarta.formatToParts(now).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
 export const formatDate = (value) =>
   validDate(value) ? shortDate.format(new Date(`${value}T00:00:00Z`)) : '—';
 export const validDate = (value) => {
@@ -34,7 +37,8 @@ export function addDays(date, days) {
   return next.toISOString().slice(0, 10);
 }
 
-export const invoiceTemplate = `*{{judul_pembayaran}}*
+const LEGACY_TEMPLATES = {
+  invoiceTemplate: `*{{judul_pembayaran}}*
 *{{toko}} · {{nomor}}*
 
 Pelanggan: {{pelanggan}}
@@ -57,9 +61,9 @@ Status: {{status}}
 {{ketentuan}}
 
 {{catatan}}
-Terima kasih sudah order di {{toko}}! {{kontak_toko}}`;
+Terima kasih sudah order di {{toko}}! {{kontak_toko}}`,
 
-export const claimTemplate = `*UPDATE KLAIM GARANSI*
+  claimTemplate: `*UPDATE KLAIM GARANSI*
 *{{toko}} · {{nomor_klaim}}*
 
 Invoice asal: {{nomor_invoice}}
@@ -75,7 +79,94 @@ Status: *{{status}}*
 
 {{garansi}}
 {{catatan}}
+{{kontak_toko}}`,
+
+  loginGuide:
+    'Gunakan email dan password pada detail akun untuk masuk. Jika diminta verifikasi, ikuti metode yang tercantum di detail akun.',
+  terms:
+    'Simpan nomor invoice untuk pengajuan klaim. Gunakan akun sesuai ketentuan layanan. Jika ada kendala akses, hubungi admin dengan menyertakan nomor invoice dan penjelasan kendalanya.',
+};
+
+export const invoiceTemplate = `*{{ikon_pembayaran}} {{judul_pembayaran}}*
+{{toko}}
+
+Order ID: {{nomor}}
+Tanggal: {{tanggal}}
+Quantity: {{jumlah}} akun
+{{baris_pelanggan}}
+Produk: {{produk}}
+Paket: {{paket}}
+Harga per akun: {{harga_satuan}}
+{{baris_diskon}}
+Total: *{{total}}*
+Status pembayaran: {{status}}
+{{baris_pembayaran}}
+{{baris_refund}}
+
+{{bagian_akun}}
+{{baris_panduan}}
+{{baris_aturan}}
+
+*🛡️ SYARAT & KETENTUAN GARANSI*
+{{garansi}}
+{{ketentuan}}
+
+{{catatan}}
+{{penutup_invoice}}
 {{kontak_toko}}`;
+
+export const claimTemplate = `*🛡️ KLAIM GARANSI {{toko}}*
+
+Nomor klaim: {{nomor_klaim}}
+Order ID: {{nomor_invoice}}
+Tanggal klaim: {{tanggal}}
+{{baris_pelanggan}}
+Paket: {{paket}}
+Status: *{{status}}*
+
+{{pesan_status_klaim}}
+{{baris_keluhan}}
+{{baris_solusi}}
+
+{{bagian_akun}}
+{{baris_panduan}}
+
+{{baris_garansi_asal}}
+{{catatan}}
+
+{{penutup_klaim}}
+{{kontak_toko}}`;
+
+const INVOICE_COPY = {
+  Menunggu: {
+    icon: '🧾',
+    title: 'Invoice Pembayaran',
+    closing: 'Silakan lakukan pembayaran sesuai total tagihan. Jika perlu bantuan, balas pesan ini.',
+  },
+  Lunas: { icon: '✅', title: 'Pembayaran Diterima!' },
+  Batal: {
+    icon: '❌',
+    title: 'Invoice Dibatalkan',
+    closing: 'Jika ingin melanjutkan pesanan, silakan balas pesan ini.',
+  },
+  'Refund penuh': {
+    icon: '↩️',
+    title: 'Konfirmasi Refund',
+    closing: 'Refund penuh sudah dicatat. Balas pesan ini jika Anda perlu bantuan.',
+  },
+  'Refund sebagian': {
+    icon: '↩️',
+    title: 'Konfirmasi Refund Sebagian',
+    closing: 'Refund sebagian sudah dicatat. Balas pesan ini jika Anda perlu bantuan.',
+  },
+};
+
+const CLAIM_COPY = {
+  filed: 'Pengajuan garansi sudah kami terima. Kami akan memeriksa kendala yang Anda laporkan.',
+  processing: 'Klaim Anda sedang diperiksa. Kami akan mengabari Anda melalui percakapan ini.',
+  resolved: 'Klaim garansi Anda sudah ditangani.',
+  rejected: 'Setelah ditinjau, pengajuan garansi ini belum dapat kami setujui.',
+};
 
 const DEFAULT_SETTINGS = {
   business: 'JUU',
@@ -84,9 +175,10 @@ const DEFAULT_SETTINGS = {
   contact: '',
   paymentInfo: '',
   loginGuide:
-    'Gunakan email dan password pada detail akun untuk masuk. Jika diminta verifikasi, ikuti metode yang tercantum di detail akun.',
+    '1. Buka halaman login layanan dan masukkan email serta password di atas.\n2. Jika diminta kode verifikasi, ikuti petunjuk di layar dan gunakan metode pada detail akun.',
+  accountRules: 'Jaga kerahasiaan password dan kode verifikasi. Gunakan akun sesuai ketentuan layanan.',
   terms:
-    'Simpan nomor invoice untuk pengajuan klaim. Gunakan akun sesuai ketentuan layanan. Jika ada kendala akses, hubungi admin dengan menyertakan nomor invoice dan penjelasan kendalanya.',
+    'Simpan Order ID untuk pengajuan klaim. Jika ada kendala, sertakan Order ID dan jelaskan kendalanya. Pelanggaran ketentuan penggunaan layanan dapat membatalkan garansi.',
   packages: {
     short: { label: 'Garansi 3 Hari', price: 80000, cost: null, days: 3 },
     full: { label: 'Full Garansi', price: 120000, cost: null, days: null },
@@ -176,7 +268,7 @@ export function warrantyFor(invoice, now = today()) {
     return {
       label: 'Tidak aktif',
       tone: 'muted',
-      message: `Garansi untuk invoice ${invoice.number} tidak aktif.`,
+      message: 'Garansi pada pesanan ini sudah tidak aktif.',
     };
   }
   const start = invoice.paymentDate || invoice.date;
@@ -351,6 +443,7 @@ export const VARIABLES = {
     nomor: 'Nomor invoice',
     tanggal: 'Tanggal invoice',
     pelanggan: 'Pelanggan',
+    baris_pelanggan: 'Nama pelanggan jika diisi',
     produk: 'Produk',
     paket: 'Paket garansi',
     jumlah: 'Jumlah akun',
@@ -358,14 +451,17 @@ export const VARIABLES = {
     total: 'Total tagihan',
     status: 'Status pembayaran',
     judul_pembayaran: 'Judul pembayaran',
+    ikon_pembayaran: 'Ikon status pembayaran',
     baris_diskon: 'Diskon jika ada',
     baris_pembayaran: 'Cara bayar',
     baris_refund: 'Detail refund',
     bagian_akun: 'Detail akun',
     baris_panduan: 'Panduan akses akun',
+    baris_aturan: 'Aturan penggunaan akun',
     garansi: 'Masa garansi',
     ketentuan: 'Ketentuan garansi',
     catatan: 'Catatan untuk pelanggan',
+    penutup_invoice: 'Penutup sesuai pembayaran',
     kontak_toko: 'Kontak admin',
   },
   claim: {
@@ -374,14 +470,18 @@ export const VARIABLES = {
     nomor_invoice: 'Invoice asal',
     tanggal: 'Tanggal klaim',
     pelanggan: 'Pelanggan',
+    baris_pelanggan: 'Nama pelanggan jika diisi',
     paket: 'Paket garansi',
     status: 'Status klaim',
+    pesan_status_klaim: 'Pembuka sesuai status klaim',
     baris_keluhan: 'Keluhan',
     baris_solusi: 'Tindakan',
     bagian_akun: 'Akun pengganti',
     baris_panduan: 'Panduan akses akun',
     garansi: 'Masa garansi',
+    baris_garansi_asal: 'Masa garansi invoice asal',
     catatan: 'Catatan untuk pelanggan',
+    penutup_klaim: 'Penutup sesuai status klaim',
     kontak_toko: 'Kontak admin',
   },
 };
@@ -400,7 +500,7 @@ export function accountBlock(accounts, claim) {
         .filter(Boolean)
         .join('\n'),
     );
-  return details.length ? `*${claim ? 'AKUN PENGGANTI' : 'DETAIL AKUN'}*\n${details.join('\n\n')}` : '';
+  return details.length ? `*📧 ${claim ? 'AKUN PENGGANTI' : 'DETAIL AKUN'}*\n${details.join('\n\n')}` : '';
 }
 
 export function composeMessage(type, draft, state) {
@@ -413,31 +513,39 @@ export function composeMessage(type, draft, state) {
     toko: settings.business,
     tanggal: formatDate(draft.date),
     pelanggan: draft.customer || 'Pelanggan',
+    baris_pelanggan: draft.customer ? `Pelanggan: ${draft.customer}` : '',
     paket: draft.packageLabel || settings.packages[draft.packageId].label,
     bagian_akun: accounts,
-    baris_panduan: accounts && settings.loginGuide ? `\n*PANDUAN AKSES*\n${settings.loginGuide}` : '',
+    baris_panduan: accounts && settings.loginGuide ? `\n*📝 CARA LOGIN*\n${settings.loginGuide}` : '',
     garansi: warranty.message,
     catatan: draft.messageNote || '',
     kontak_toko: settings.contact ? `Hubungi admin di ${settings.contact}.` : '',
   };
-  if (isClaim)
+  if (isClaim) {
+    const status = Object.hasOwn(CLAIM, draft.status) ? draft.status : 'filed';
+    let closing = 'Simpan nomor klaim untuk mengecek perkembangannya.';
+    if (status === 'resolved' && accounts) {
+      closing =
+        'Silakan coba masuk dengan akun pengganti di atas. Jika masih terkendala, balas pesan ini dengan nomor klaim.';
+    } else if (status === 'resolved' || status === 'rejected') {
+      closing = 'Jika perlu bantuan lanjutan, balas pesan ini dengan nomor klaim.';
+    }
     Object.assign(values, {
       nomor_klaim: draft.number || nextNumber(state, type, draft.date).number,
       nomor_invoice: linked?.number || draft.invoiceNumber || '—',
-      status: CLAIM[draft.status],
+      status: CLAIM[status],
+      pesan_status_klaim: CLAIM_COPY[status],
       baris_keluhan: draft.issue ? `Keluhan: ${draft.issue}` : '',
-      baris_solusi: draft.resolution ? `Tindakan: ${draft.resolution}` : '',
+      baris_solusi: draft.resolution
+        ? `${status === 'rejected' ? 'Alasan keputusan' : 'Tindak lanjut'}: ${draft.resolution}`
+        : '',
+      baris_garansi_asal: warranty.message ? `Garansi invoice asal: ${warranty.message}` : '',
+      penutup_klaim: closing,
     });
-  else {
+  } else {
     const detail = priceDetails(draft);
     const status = paymentLabel(draft);
-    const title =
-      {
-        Lunas: 'Pembayaran Diterima!',
-        'Refund penuh': 'Konfirmasi Refund',
-        'Refund sebagian': 'Konfirmasi Refund Sebagian',
-        Batal: 'Invoice Dibatalkan',
-      }[status] || 'Invoice Pembayaran';
+    const copy = INVOICE_COPY[status] || INVOICE_COPY.Menunggu;
     Object.assign(values, {
       nomor: draft.number || nextNumber(state, type, draft.date).number,
       produk: draft.product || settings.product,
@@ -445,8 +553,13 @@ export function composeMessage(type, draft, state) {
       harga_satuan: money(draft.price),
       total: money(detail.total),
       status,
-      judul_pembayaran: title,
+      judul_pembayaran: copy.title,
+      ikon_pembayaran: copy.icon,
       ketentuan: settings.terms,
+      baris_aturan: accounts && settings.accountRules ? `\n*⚠️ ATURAN PENTING*\n${settings.accountRules}` : '',
+      penutup_invoice:
+        copy.closing ||
+        `Terima kasih sudah order di ${settings.business}! Jika ada kendala saat login, silakan balas pesan ini.`,
       baris_diskon: detail.discount ? `Diskon: ${money(detail.discount)}` : '',
       baris_pembayaran:
         draft.status === 'pending' && settings.paymentInfo ? `Pembayaran: ${settings.paymentInfo}` : '',
@@ -457,6 +570,10 @@ export function composeMessage(type, draft, state) {
     });
   }
   return settings[isClaim ? 'claimTemplate' : 'invoiceTemplate']
+    .replace(/\r\n/g, '\n')
+    .replace(/^[\t ]*\{\{[\t ]*([a-z_]+)[\t ]*\}\}[\t ]*\n/gm, (line, key) =>
+      Object.hasOwn(values, key) && !String(values[key] ?? '').trim() ? '' : line,
+    )
     .replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (full, key) =>
       Object.hasOwn(values, key) ? String(values[key] ?? '') : full,
     )
@@ -545,7 +662,13 @@ export function cleanExpense(record) {
 }
 
 export function cleanSettings(values) {
-  const defaults = createState().settings;
+  const defaults = DEFAULT_SETTINGS;
+  // Adopt the current defaults while preserving copy edited by the shop.
+  const textSetting = (key, limit, allowEmpty = false) => {
+    if (typeof values[key] !== 'string') return defaults[key];
+    const text = str(values[key], limit);
+    return text === LEGACY_TEMPLATES[key] || (!text && !allowEmpty) ? defaults[key] : text;
+  };
   return {
     business: str(values.business, 60) || defaults.business,
     prefix:
@@ -555,8 +678,9 @@ export function cleanSettings(values) {
     product: str(values.product) || defaults.product,
     contact: str(values.contact, 120),
     paymentInfo: str(values.paymentInfo, 700),
-    terms: str(values.terms, 2200),
-    loginGuide: typeof values.loginGuide === 'string' ? str(values.loginGuide, 1600) : defaults.loginGuide,
+    terms: textSetting('terms', 2200, true),
+    loginGuide: textSetting('loginGuide', 1600, true),
+    accountRules: textSetting('accountRules', 1600, true),
     packages: Object.fromEntries(
       PACKAGES.map((id) => {
         const p = values.packages?.[id] ?? defaults.packages[id];
@@ -571,8 +695,8 @@ export function cleanSettings(values) {
         ];
       }),
     ),
-    invoiceTemplate: str(values.invoiceTemplate, 10000) || invoiceTemplate,
-    claimTemplate: str(values.claimTemplate, 10000) || claimTemplate,
+    invoiceTemplate: textSetting('invoiceTemplate', 10000),
+    claimTemplate: textSetting('claimTemplate', 10000),
   };
 }
 
@@ -666,84 +790,4 @@ export function csvString(rows) {
       )
       .join('\r\n')
   );
-}
-
-export function exampleState(now = today()) {
-  const example = createState();
-  const monthDay = Number(now.slice(-2));
-  const offsets = [0, 1, 2, 3, 5, 7, 9, 11, 12, 14, 16, 18, 21, 23];
-  const people = [
-    'Alif Ramadhan',
-    'Nadia Putri',
-    'Bayu Saputra',
-    'Maya Sari',
-    'Rizky Pratama',
-    'Dina Amelia',
-    'Fajar Maulana',
-  ];
-  const groups = [
-    'full',
-    'short',
-    'full',
-    'short',
-    'short',
-    'full',
-    'full',
-    'short',
-    'short',
-    'full',
-    'short',
-    'full',
-    'short',
-    'full',
-  ];
-  const amounts = [2, 3, 1, 2, 2, 3, 2, 1, 2, 2, 1, 2, 1, 1];
-  example.invoices = offsets.map((offset, index) => {
-    const date = addDays(now, -Math.min(offset, monthDay - 1));
-    const packageId = groups[index];
-    const settings = example.settings.packages[packageId];
-    return cleanInvoice({
-      id: `contoh-invoice-${index}`,
-      number: `JUU-${date.slice(2).replaceAll('-', '')}-${String(66 - index).padStart(3, '0')}`,
-      status: index === 1 ? 'pending' : 'paid',
-      date,
-      paymentDate: date,
-      customer: people[index % people.length],
-      packageId,
-      packageLabel: settings.label,
-      product: example.settings.product,
-      warrantyDays: settings.days,
-      price: settings.price,
-      qty: amounts[index],
-      unitCost: packageId === 'short' ? 48500 : 72000,
-      discount: index % 4 === 0 ? 5000 : 0,
-      fee: 2500,
-    });
-  });
-  example.claims = [
-    cleanClaim({
-      id: 'contoh-klaim',
-      number: 'JUU-GR-CONTOH',
-      date: now,
-      customer: 'Alif Ramadhan',
-      invoiceId: example.invoices[0].id,
-      invoiceNumber: example.invoices[0].number,
-      packageId: 'full',
-      packageLabel: 'Full Garansi',
-      status: 'processing',
-      issue: 'Ada kendala akses',
-      cost: 18000,
-    }),
-  ];
-  example.expenses = [
-    cleanExpense({ id: 'contoh-biaya-1', date: now, name: 'Promosi toko', amount: 38000, category: 'Promosi' }),
-    cleanExpense({
-      id: 'contoh-biaya-2',
-      date: addDays(now, -Math.min(5, monthDay - 1)),
-      name: 'Biaya operasional',
-      amount: 25000,
-      category: 'Operasional',
-    }),
-  ];
-  return example;
 }

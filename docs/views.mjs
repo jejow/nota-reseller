@@ -60,7 +60,7 @@ const brand = () => `<button class="brand" type="button" data-action="nav" data-
   <span class="brand-mark">${icon('receipt')}</span><span class="brand-text">Nota Reseller<small>Panel penjualan</small></span>
 </button>`;
 
-export function chrome(view, state, demo) {
+export function chrome(view, state) {
   const navButton = (
     id,
     label = NAV[id][0],
@@ -74,7 +74,6 @@ export function chrome(view, state, demo) {
     topbar: `<div class="breadcrumbs"><span>Ruang kerja</span>${icon('chevronRight')}<strong>${NAV[view][0]}</strong></div>
       <div class="mobile-brand">${brand()}</div>
       <div class="top-actions">
-        ${demo ? `<button class="demo-button" type="button" data-action="demo-info">${icon('spark')}Data contoh</button>` : ''}
         <button class="workspace-profile" type="button" data-action="nav" data-id="settings" aria-label="Pengaturan toko">
           <span class="avatar">${esc(state.settings.business.slice(0, 3).toUpperCase())}</span>
           <span class="profile-name">${esc(state.settings.business)}</span>
@@ -137,6 +136,11 @@ function metrics(report) {
 }
 
 function chartCard(report) {
+  if (!report.events.length) {
+    return `<section class="card">${headCard('Tren penjualan')}
+      ${empty('Belum ada aktivitas keuangan', 'Grafik akan tampil setelah transaksi dicatat.', '', 'bars')}
+    </section>`;
+  }
   return `<section class="card">
     <div class="card-head"><div><h2>Tren penjualan</h2><p>Omzet dan laba pada periode ini</p></div>
       <div class="chart-legend"><span class="chart-key"><i></i>Omzet bersih</span><span class="chart-key"><i class="profit"></i>Laba bersih</span></div>
@@ -317,7 +321,7 @@ export function importFeedback(draft) {
     ${
       draft.supplierDate
         ? `<div class="actions import-meta"><span>Tanggal supplier <strong>${formatDate(draft.supplierDate)}</strong></span>
-      ${btn('Pakai untuk tanggal invoice', '', 'supplier-date', 'plain btn-sm')}</div>`
+      ${btn('Gunakan tanggal supplier', '', 'supplier-date', 'plain btn-sm')}</div>`
         : ''
     }`;
 }
@@ -357,8 +361,9 @@ function invoiceFields(draft, state) {
       `<div class="fields">
       ${field('Nama pelanggan', 'customer', draft.customer, { placeholder: 'Nama atau username' })}
       ${field('Kontak pelanggan', 'contact', draft.contact, { placeholder: 'WhatsApp atau email', limit: 100 })}
-      ${field('Produk', 'product', draft.product, { required: true })}
-      ${field('Tanggal invoice', 'date', draft.date, { type: 'date', required: true })}
+      ${field('Produk', 'product', draft.product, { required: true, wide: true })}
+      ${picker('Mode tanggal invoice', 'dateMode', { auto: 'Otomatis', manual: 'Manual' }, draft.dateMode)}
+      ${field('Tanggal invoice (WIB)', 'date', draft.date, { type: 'date', required: true, extra: draft.dateMode === 'auto' ? 'readonly' : '' })}
       ${field('Referensi supplier', 'supplierRef', draft.supplierRef, { placeholder: 'Opsional', limit: 120 })}
       ${quantityField(draft.qty)}
     </div><div id="qty-hint"></div>`,
@@ -376,7 +381,7 @@ function invoiceFields(draft, state) {
       ${field('Metode pembayaran', 'paymentMethod', draft.paymentMethod, { placeholder: 'Transfer, QRIS, dll.', limit: 80 })}
     </div>
     <div class="form-section fields" id="payment-fields"${hide(draft.status !== 'paid')}>
-      ${field('Tanggal pembayaran', 'paymentDate', draft.paymentDate, { type: 'date' })}
+      ${field('Tanggal pembayaran', 'paymentDate', draft.paymentDate, { type: 'date', help: 'Penjualan masuk laporan pada tanggal ini.' })}
       ${amountField('Nominal refund', 'refund', draft.refund, { placeholder: 'Opsional' })}
       <div id="refund-date-field"${hide(!draft.refund)}>${field('Tanggal refund', 'refundDate', draft.refundDate, { type: 'date' })}</div>
     </div>
@@ -430,7 +435,7 @@ function claimFields(draft, state) {
       `<div class="fields">
       ${picker('Status klaim', 'status', CLAIM, draft.status, { wide: true })}
       ${area('Keluhan pelanggan', 'issue', draft.issue, { placeholder: 'Contoh: akun tidak bisa login', wide: true })}
-      ${area('Solusi atau tindakan', 'resolution', draft.resolution, { placeholder: 'Contoh: akun pengganti sudah disiapkan', wide: true })}
+      ${area('Tindak lanjut atau alasan keputusan', 'resolution', draft.resolution, { placeholder: 'Contoh: akun pengganti sudah disiapkan', wide: true })}
       ${amountField('Biaya penggantian', 'cost', draft.cost)}
       ${field('Tanggal biaya', 'costDate', draft.costDate, { type: 'date' })}
       ${amountField('Kredit dari supplier', 'reimbursement', draft.reimbursement)}
@@ -731,6 +736,7 @@ export function settingsView(draft, type) {
         ${field('Kontak admin', 'contact', draft.contact, { ...cfg, placeholder: 'WhatsApp atau email', limit: 120 })}
         ${area('Instruksi pembayaran', 'paymentInfo', draft.paymentInfo, { ...cfg, wide: true, limit: 700, placeholder: 'Tampil pada invoice menunggu pembayaran' })}
         ${area('Panduan akses akun', 'loginGuide', draft.loginGuide, { ...cfg, wide: true, limit: 1600 })}
+        ${area('Aturan penggunaan akun', 'accountRules', draft.accountRules, { ...cfg, wide: true, limit: 1600 })}
         ${area('Ketentuan garansi', 'terms', draft.terms, { ...cfg, wide: true, limit: 2200 })}
       </div>`,
       )}

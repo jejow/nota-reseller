@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parseOrder, parseAmount } from '../docs/import.mjs';
 import {
   createState,
+  today,
   cleanInvoice,
   cleanClaim,
   cleanExpense,
@@ -132,6 +133,68 @@ test('invoice numbers, warranty dates, and separate editable templates', () => {
     ),
     'Selesai → JUU-261125-053',
   );
+});
+
+test('a new ledger starts empty and the calendar rolls over at midnight WIB', () => {
+  assert.equal(today(new Date('2026-11-25T16:59:59Z')), '2026-11-25');
+  assert.equal(today(new Date('2026-11-25T17:00:00Z')), '2026-11-26');
+  const report = financialReport(createState(), {});
+  assert.equal(report.events.length, 0);
+  assert.equal(report.totals.revenue, 0);
+  assert.equal(report.totals.net, 0);
+});
+
+test('invoice copy follows payment status and fills the order date and account sections', () => {
+  const state = createState();
+  const order = {
+    ...invoice(),
+    number: '',
+    accounts: parseOrder(sampleEmail + '|Sandi|KUNCI').accounts,
+    customer: 'Rani',
+  };
+  const paid = composeMessage('invoice', order, state);
+  assert.match(paid, /Pembayaran Diterima!/);
+  assert.match(paid, /Order ID: JUU-261125-053\nTanggal: 25 Nov 2026\nQuantity: 2 akun\nPelanggan: Rani/);
+  assert.match(paid, /DETAIL AKUN.*CARA LOGIN.*ATURAN PENTING.*SYARAT & KETENTUAN GARANSI/s);
+  assert.doesNotMatch(paid, /\{\{|\n{3,}/);
+
+  const pending = composeMessage('invoice', { ...order, status: 'pending', accounts: [] }, state);
+  assert.match(pending, /Invoice Pembayaran.*Silakan lakukan pembayaran/s);
+  assert.doesNotMatch(pending, /Pembayaran Diterima|DETAIL AKUN|CARA LOGIN/);
+});
+
+test('claim copy responds to its status and mentions a replacement only when provided', () => {
+  const state = createState();
+  const claim = cleanClaim({
+    date: day,
+    invoiceNumber: 'JUU-261124-052',
+    packageLabel: 'Full Garansi',
+    issue: 'Akses bermasalah',
+    resolution: 'Hasil peninjauan',
+  });
+  const message = (status, accounts = []) => composeMessage('claim', { ...claim, status, accounts }, state);
+  assert.match(message('filed'), /Order ID: JUU-261124-052.*Pengajuan garansi sudah kami terima/s);
+  assert.match(message('processing'), /Klaim Anda sedang diperiksa/);
+  assert.match(message('resolved'), /Klaim garansi Anda sudah ditangani/);
+  assert.doesNotMatch(message('resolved'), /akun pengganti/i);
+  const accounts = parseOrder(sampleEmail + '|Sandi|KUNCI').accounts;
+  assert.match(message('resolved', accounts), /AKUN PENGGANTI.*Silakan coba masuk dengan akun pengganti/s);
+  assert.match(message('rejected'), /belum dapat kami setujui.*Alasan keputusan: Hasil peninjauan/s);
+});
+
+test('reading a backup retains custom message templates and recorded turnover', () => {
+  const state = createState();
+  state.settings.invoiceTemplate = 'Invoice versi toko {{nomor}}';
+  state.settings.claimTemplate = 'Klaim versi toko {{nomor_klaim}}';
+  state.settings.terms = 'Ketentuan toko.';
+  state.settings.loginGuide = '';
+  state.invoices.push(invoice());
+  const restored = readBackup(state);
+  assert.equal(restored.settings.invoiceTemplate, state.settings.invoiceTemplate);
+  assert.equal(restored.settings.claimTemplate, state.settings.claimTemplate);
+  assert.equal(restored.settings.terms, state.settings.terms);
+  assert.equal(restored.settings.loginGuide, '');
+  assert.equal(financialReport(restored, {}).totals.revenue, 155000);
 });
 
 test('backup excludes raw data and older copies cannot restore deleted rows', () => {
