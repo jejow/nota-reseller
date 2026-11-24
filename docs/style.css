@@ -260,6 +260,13 @@ strong {
   align-items: center;
   gap: 11px;
 }
+.sync-control {
+  display: flex;
+}
+.sync-link .icon {
+  width: 14px;
+  height: 14px;
+}
 .breadcrumbs {
   font-size: 0.83rem;
   color: var(--soft-text);

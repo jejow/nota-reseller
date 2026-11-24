@@ -2,9 +2,15 @@
 
 Panel JUU untuk membuat invoice, mencatat klaim garansi, dan memantau laba reseller. Tampilan menyesuaikan layar HP dan desktop.
 
+## Sinkronisasi antar perangkat
+
+Buka [Nota Reseller versi sinkron](https://nota-reseller-sync.soppy-wonkier1jwillo.chatgpt.site/) dan masuk dengan akun ChatGPT yang sama di setiap perangkat. Invoice, klaim, pengeluaran, harga paket, dan template pesan tersimpan di database privat. Aplikasi mengambil perubahan secara berkala ketika halaman terbuka dan saat kembali ke tab. Gunakan **Sinkronkan sekarang** untuk langsung mengambil perubahan.
+
+Riwayat yang sudah dibuat di versi GitHub Pages dapat dipindahkan sekali melalui **Pengaturan → Unduh backup**. Buka versi sinkron, pilih **Pengaturan → Impor backup**, lalu gabungkan file tersebut.
+
 ## Mulai memakai
 
-Pembukuan baru dimulai dari Rp0. Ringkasan memakai transaksi yang Anda catat di browser ini.
+Pembukuan baru dimulai dari Rp0. Pilih versi sinkron untuk menggunakan satu pembukuan dari beberapa perangkat.
 
 1. Buka **Pengaturan** untuk melengkapi identitas toko, instruksi pembayaran, panduan akses, dan biaya modal default. Harga awal **Garansi 3 Hari Rp80.000** dan **Full Garansi Rp120.000** per akun.
 2. Buka **Buat invoice**. Unggah satu order atau tempel data akun. Periksa detail akun, tanggal, jumlah, paket, dan modal rupiah. Pilih **Lunas** ketika pembayaran dari pelanggan diterima.
@@ -38,7 +44,7 @@ Nomor invoice awal mengikuti format `JUU-YYMMDD-053`, dengan tanggal sesuai pili
 
 ## Cadangan dan penyimpanan
 
-Transaksi dan template disimpan di browser yang dipakai. Gunakan **Pengaturan → Unduh backup** dan **Impor backup** untuk membawa data ke HP atau browser lain. Impor menggabungkan transaksi berdasarkan ID internal dan mengambil versi terbaru dari transaksi yang sama.
+Versi GitHub Pages menyimpan pembukuan di browser. Versi sinkron menyimpan pembukuan di database saat terkoneksi. Gunakan **Pengaturan → Unduh backup** untuk membuat salinan. Impor menggabungkan transaksi berdasarkan ID internal dan mengambil versi terbaru dari transaksi yang sama.
 
 Kata sandi, 2FA, tautan verifikasi, dan draf pesan hanya ada selama sesi halaman. Simpan TXT atau salin pesan ketika perlu menyimpan hasil untuk dikirim. File order dan teks diproses di browser.
 
@@ -46,7 +52,9 @@ Kata sandi, 2FA, tautan verifikasi, dan draf pesan hanya ada selama sesi halaman
 
 [Buka Nota Reseller](https://jejow.github.io/nota-reseller/)
 
-Situs dipublikasikan dari folder `docs` pada branch `main`.
+Situs dipublikasikan dari folder `docs` pada branch `main`. Header **Versi sinkron** membuka pembukuan berbasis database.
+
+Versi sinkron dibangun dari sumber yang sama dengan `npm ci` dan `npm run build:cloud`. Worker membutuhkan autentikasi ChatGPT Sites dan binding D1 bernama `DB`. Skema SQL berada di folder `drizzle`.
 
 ## Menjalankan sumber secara lokal
 

@@ -60,7 +60,21 @@ const brand = () => `<button class="brand" type="button" data-action="nav" data-
   <span class="brand-mark">${icon('receipt')}</span><span class="brand-text">Nota Reseller<small>Panel penjualan</small></span>
 </button>`;
 
-export function chrome(view, state) {
+const syncedLink = (url, label = 'Versi sinkron') =>
+  `<a class="btn btn-outline btn-sm sync-link" href="${esc(url)}">${icon('link')}${label}</a>`;
+
+export function syncControl(sync) {
+  if (sync.mode === 'local') return syncedLink(sync.url);
+  const [label, glyph] = {
+    loading: ['Menghubungkan', 'clock'],
+    ready: ['Tersinkron', 'checkCircle'],
+    saving: ['Menyimpan', 'clock'],
+    error: ['Coba sinkron', 'alert'],
+  }[sync.phase];
+  return btn(label, glyph, 'sync-now', 'outline btn-sm sync-link', 'title="Sinkronkan sekarang"');
+}
+
+export function chrome(view, state, sync) {
   const navButton = (
     id,
     label = NAV[id][0],
@@ -70,10 +84,11 @@ export function chrome(view, state) {
     sidebar: `${brand()}<nav class="sidebar-nav" aria-label="Navigasi utama">
       <p class="nav-label">Ruang kerja</p>${['dashboard', 'invoice', 'claim', 'history', 'finance'].map((id) => navButton(id)).join('')}
       <p class="nav-label">Preferensi</p>${navButton('settings')}
-    </nav><div class="side-foot">${icon('lock')}<span>Data di browser ini</span></div>`,
+    </nav><div class="side-foot">${icon('lock')}<span>${sync.mode === 'cloud' ? 'Pembukuan privat' : 'Data di browser ini'}</span></div>`,
     topbar: `<div class="breadcrumbs"><span>Ruang kerja</span>${icon('chevronRight')}<strong>${NAV[view][0]}</strong></div>
       <div class="mobile-brand">${brand()}</div>
       <div class="top-actions">
+        <div id="sync-control" class="sync-control">${syncControl(sync)}</div>
         <button class="workspace-profile" type="button" data-action="nav" data-id="settings" aria-label="Pengaturan toko">
           <span class="avatar">${esc(state.settings.business.slice(0, 3).toUpperCase())}</span>
           <span class="profile-name">${esc(state.settings.business)}</span>
@@ -717,7 +732,7 @@ export function templateFields(draft, type) {
   <p class="field-help" id="template-validation" aria-live="polite"></p>`;
 }
 
-export function settingsView(draft, type) {
+export function settingsView(draft, type, sync) {
   const cfg = { attr: 'data-setting' };
   const save =
     '<button type="submit" class="btn btn-primary" form="settings-form">' +
@@ -725,6 +740,26 @@ export function settingsView(draft, type) {
     'Simpan pengaturan</button>';
   return `${pageHead('Pengaturan', 'Sesuaikan toko, harga paket, dan format pesan pelanggan.', save)}
     <form class="settings-grid" id="settings-form" autocomplete="off">
+      <section class="card wide">
+        ${headCard(
+          'Sinkronisasi antar perangkat',
+          sync.mode === 'cloud'
+            ? 'Masuk dengan akun ChatGPT yang sama dari HP atau PC untuk membuka pembukuan ini.'
+            : 'Versi sinkron menyimpan invoice, klaim, pengeluaran, dan pengaturan di database privat.',
+        )}
+        <div class="card-body">
+          <p class="field-help">${
+            sync.mode === 'cloud'
+              ? 'Untuk memindahkan riwayat lama dari versi lokal, impor file backup di bawah.'
+              : 'Untuk membawa riwayat dari browser ini, unduh backup di bawah lalu impor di versi sinkron.'
+          }</p>
+          <div class="actions" style="margin-top:10px">${
+            sync.mode === 'cloud'
+              ? btn('Sinkronkan sekarang', 'history', 'sync-now')
+              : syncedLink(sync.url, 'Buka versi sinkron')
+          }</div>
+        </div>
+      </section>
       ${formCard(
         'Identitas toko',
         'Tampil pada invoice dan pesan klaim.',
@@ -770,7 +805,7 @@ export function settingsView(draft, type) {
           <div class="actions settings-actions">${save}</div>
         </div>
       </section>
-      <section class="card wide">${headCard('Cadangan data', 'Pindahkan transaksi dan template ke HP atau browser lain.')}
+      <section class="card wide">${headCard('Cadangan data', 'Unduh atau impor salinan pembukuan.')}
         <div class="card-body">
           <p class="field-help">File cadangan berisi data keuangan, riwayat, dan pengaturan toko. Simpan di tempat yang hanya bisa Anda akses.</p>
           <div class="actions" style="margin-top:10px">

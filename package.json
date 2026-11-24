@@ -1,0 +1,12 @@
+{
+  "name": "nota-reseller",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "build:cloud": "node cloud/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

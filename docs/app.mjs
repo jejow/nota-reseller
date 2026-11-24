@@ -38,15 +38,19 @@ import {
   ledgerRows,
   expenseForm,
   settingsView,
+  syncControl,
   templateFields,
 } from './views.mjs';
 import { mountChart } from './chart.mjs';
+import { CLOUD_URL, SyncError, createSyncedLedger } from './sync.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 const views = ['dashboard', 'invoice', 'claim', 'history', 'finance', 'settings'];
 const locationView = () => (views.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dashboard');
 const viewContainer = $('#view');
 const modal = $('#modal');
+const cloud = document.documentElement.dataset.storage === 'cloud' ? createSyncedLedger() : null;
+const sync = { url: CLOUD_URL, mode: cloud ? 'cloud' : 'local', phase: cloud ? 'loading' : 'local' };
 const initialDate = today();
 const ui = {
   view: locationView(),
@@ -66,7 +70,7 @@ const ui = {
 let storageProblem = '';
 let state = createState();
 try {
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = !cloud && localStorage.getItem(STORAGE_KEY);
   if (saved) state = readBackup(JSON.parse(saved));
 } catch {
   storageProblem = 'Penyimpanan browser tidak dapat dibaca. Periksa izin penyimpanan atau impor cadangan.';
@@ -75,10 +79,15 @@ try {
 const drafts = {};
 const sessionDocuments = new Map();
 let settingsDraft = null;
+let settingsVersion = '';
+let settingsDirty = false;
 let closeChart = null;
 let confirmAction = null;
 let expenseDraft = null;
 let editorSaving = false;
+let expenseSaving = false;
+let settingsSaving = false;
+let cloudRead;
 
 function blankDraft(type, data = state) {
   const pack = data.settings.packages.short;
@@ -156,6 +165,19 @@ function toast(message, error = false) {
 }
 
 async function persist(transform, recover = false) {
+  if (cloud) {
+    setSyncPhase('saving');
+    try {
+      const { snapshot, value } = await cloud.transact(transform);
+      state = snapshot.state;
+      setSyncPhase('ready');
+      return value;
+    } catch (error) {
+      if (cloud.current) state = cloud.current.state;
+      setSyncPhase(error instanceof SyncError ? 'error' : 'ready');
+      throw error;
+    }
+  }
   const write = () => {
     let current = state;
     try {
@@ -181,16 +203,69 @@ async function persist(transform, recover = false) {
 }
 
 function renderChrome() {
-  const shell = chrome(ui.view, state);
+  const shell = chrome(ui.view, state, sync);
   $('#sidebar').innerHTML = shell.sidebar;
   $('#topbar').innerHTML = shell.topbar;
   $('#bottom-nav').innerHTML = shell.bottom;
+}
+
+function setSyncPhase(phase) {
+  if (phase === sync.phase) return;
+  sync.phase = phase;
+  const current = $('#sync-control');
+  if (current) {
+    const focused = current.contains(document.activeElement);
+    current.innerHTML = syncControl(sync);
+    if (focused) current.querySelector('button')?.focus({ preventScroll: true });
+  } else renderChrome();
+}
+
+function openSettingsDraft() {
+  settingsDraft = structuredClone(state.settings);
+  settingsVersion = state.settingsAt;
+  settingsDirty = false;
+}
+
+async function refreshCloud(showToast = false) {
+  if (!cloud) return;
+  if (cloudRead) return cloudRead;
+  if (showToast || !cloud.current) setSyncPhase('loading');
+  cloudRead = (async () => {
+    try {
+      const snapshot = await cloud.refresh();
+      const changed = state !== snapshot.state;
+      state = snapshot.state;
+      if (sync.phase !== 'saving') setSyncPhase('ready');
+      const refreshSettings = settingsDraft && !settingsDirty && settingsVersion !== state.settingsAt;
+      if (refreshSettings) openSettingsDraft();
+      if (changed && ($('#cloud-empty') || (ui.view === 'settings' ? refreshSettings : !currentDraft()?.dirty)))
+        render();
+      if (showToast) toast('Pembukuan tersinkron.');
+    } catch (error) {
+      setSyncPhase('error');
+      if (!cloud.current) render();
+      if (showToast) toast(error.message, true);
+    } finally {
+      cloudRead = null;
+    }
+  })();
+  return cloudRead;
 }
 
 function render() {
   closeChart?.();
   closeChart = null;
   renderChrome();
+  if (cloud && !cloud.current) {
+    viewContainer.innerHTML =
+      '<div id="cloud-empty" class="card empty" role="status">' +
+      (sync.phase === 'error'
+        ? '<h1>Pembukuan belum bisa dibuka</h1><p>Periksa koneksi atau muat ulang jika sesi akun berakhir.</p>' +
+          btn('Coba lagi', 'history', 'sync-now', 'primary')
+        : '<h1>Memuat pembukuan…</h1><p>Menghubungkan ke database.</p>') +
+      '</div>';
+    return;
+  }
   const type = editType();
   if (type) {
     const draft = (drafts[type] ??= blankDraft(type));
@@ -201,8 +276,8 @@ function render() {
   if (ui.view === 'history') {
     viewContainer.innerHTML = historyView(state, ui);
   } else if (ui.view === 'settings') {
-    settingsDraft ??= structuredClone(state.settings);
-    viewContainer.innerHTML = settingsView(settingsDraft, ui.templateType);
+    if (!settingsDraft) openSettingsDraft();
+    viewContainer.innerHTML = settingsView(settingsDraft, ui.templateType, sync);
     updateTemplatePreview();
   } else {
     const snapshot = report();
@@ -238,7 +313,7 @@ window.addEventListener('popstate', () => {
 });
 
 window.addEventListener('storage', (event) => {
-  if (event.key !== STORAGE_KEY || !event.newValue) return;
+  if (cloud || event.key !== STORAGE_KEY || !event.newValue) return;
   try {
     state = readBackup(JSON.parse(event.newValue));
     if (editType() || ui.view === 'settings') renderChrome();
@@ -491,7 +566,7 @@ const collection = (type) => ({ invoice: 'invoices', claim: 'claims', expense: '
 
 function checkRevision(existing, draft) {
   if (draft.id && (!existing || existing.updatedAt !== draft.updatedAt)) {
-    throw new Error('Transaksi berubah di tab lain. Buka ulang dari riwayat.');
+    throw new Error('Transaksi sudah diubah di sesi lain. Buka ulang dari riwayat.');
   }
 }
 
@@ -524,14 +599,16 @@ async function saveEditor(type, draft, allowDuplicate = false) {
   try {
     const record = await persist((next) => {
       const key = collection(type);
-      const existing = next[key].find((record) => record.id === draft.id);
+      const id = draft.id || (draft.pendingId ??= newId());
+      const existing = next[key].find((record) => record.id === id);
       checkRevision(existing, draft);
+      if (!draft.id && existing) return existing;
       const stamp = new Date().toISOString();
       const serial = draft.id ? null : nextNumber(next, type, draft.date);
       if (serial) next[type === 'claim' ? 'nextClaim' : 'nextInvoice'] = serial.next;
       const data = {
         ...draft,
-        id: draft.id || newId(),
+        id,
         number: draft.number || serial.number,
         createdAt: existing?.createdAt || stamp,
         updatedAt: stamp,
@@ -681,24 +758,32 @@ function openExpense(id = '') {
 }
 
 async function saveExpense(form) {
+  if (expenseSaving) return;
   const draft = { ...expenseDraft, ...Object.fromEntries(new FormData(form)) };
   if (Number(draft.amount) <= 0 || !draft.name.trim())
     throw new Error('Isi nama dan nominal pengeluaran lebih dari Rp0.');
-  await persist((next) => {
-    const existing = next.expenses.find((item) => item.id === draft.id);
-    checkRevision(existing, draft);
-    const stamp = new Date().toISOString();
-    const item = cleanExpense({
-      ...draft,
-      id: draft.id || newId(),
-      createdAt: existing?.createdAt || stamp,
-      updatedAt: stamp,
+  expenseSaving = true;
+  const id = draft.id || (expenseDraft.pendingId ??= newId());
+  try {
+    await persist((next) => {
+      const existing = next.expenses.find((item) => item.id === id);
+      checkRevision(existing, draft);
+      if (!draft.id && existing) return;
+      const stamp = new Date().toISOString();
+      const item = cleanExpense({
+        ...draft,
+        id,
+        createdAt: existing?.createdAt || stamp,
+        updatedAt: stamp,
+      });
+      next.expenses = [...next.expenses.filter((expense) => expense.id !== item.id), item];
     });
-    next.expenses = [...next.expenses.filter((expense) => expense.id !== item.id), item];
-  });
-  modal.close();
-  render();
-  toast('Pengeluaran tersimpan.');
+    modal.close();
+    render();
+    toast('Pengeluaran tersimpan.');
+  } finally {
+    expenseSaving = false;
+  }
 }
 
 function updateTemplatePreview() {
@@ -731,19 +816,30 @@ function updateTemplatePreview() {
 }
 
 async function updateSettings() {
+  if (settingsSaving) return;
   if (!settingsDraft.invoiceTemplate.trim() || !settingsDraft.claimTemplate.trim()) {
     throw new Error('Isi kedua template pesan sebelum menyimpan.');
   }
-  await persist((next) => {
-    next.settings = cleanSettings(settingsDraft);
-    next.settingsAt = new Date().toISOString();
-  });
-  settingsDraft = structuredClone(state.settings);
-  for (const type of ['invoice', 'claim']) {
-    if (drafts[type] && !drafts[type].id && !drafts[type].dirty) drafts[type] = blankDraft(type);
+  const changes = cleanSettings(settingsDraft);
+  const version = settingsVersion;
+  settingsSaving = true;
+  try {
+    await persist((next) => {
+      if (cloud && next.settingsAt !== version) {
+        throw new Error('Pengaturan sudah diubah di perangkat lain. Muat ulang halaman dan coba lagi.');
+      }
+      next.settings = changes;
+      next.settingsAt = new Date().toISOString();
+    });
+    openSettingsDraft();
+    for (const type of ['invoice', 'claim']) {
+      if (drafts[type] && !drafts[type].id && !drafts[type].dirty) drafts[type] = blankDraft(type);
+    }
+    render();
+    toast('Pengaturan disimpan.');
+  } finally {
+    settingsSaving = false;
   }
-  render();
-  toast('Pengaturan disimpan.');
 }
 
 function exportCsv() {
@@ -794,7 +890,7 @@ async function importBackup(file) {
         Object.assign(next, mergeBackup(next, incoming));
         return new Set(next.invoices.map((item) => item.number)).size < next.invoices.length;
       }, true);
-      settingsDraft = structuredClone(state.settings);
+      openSettingsDraft();
       render();
       toast(
         duplicate
@@ -883,6 +979,7 @@ document.addEventListener('input', (event) => {
   } else if (draft && el.dataset.draft && !['SELECT', 'FIELDSET'].includes(el.tagName) && el.type !== 'radio') {
     readDraftField(el);
   } else if (el.dataset.setting) {
+    settingsDirty = true;
     const [key, part] = el.dataset.setting.split('.');
     if (part)
       settingsDraft.packages[key][part] =
@@ -947,6 +1044,7 @@ document.addEventListener('submit', async (event) => {
 
 const actions = {
   nav: (id) => go(id),
+  'sync-now': () => refreshCloud(true),
   'mobile-menu': () =>
     dialog(
       'Lainnya',
@@ -1067,12 +1165,14 @@ const actions = {
     const area = $('#template-input');
     area.setRangeText('{{' + token + '}}', area.selectionStart, area.selectionEnd, 'end');
     settingsDraft[area.dataset.setting] = area.value;
+    settingsDirty = true;
     area.focus();
     updateTemplatePreview();
   },
   'reset-template': () => {
     const area = $('#template-input');
     settingsDraft[area.dataset.setting] = area.value = createState().settings[area.dataset.setting];
+    settingsDirty = true;
     updateTemplatePreview();
     toast('Template bawaan dipasang. Simpan untuk menerapkannya.');
   },
@@ -1100,3 +1200,14 @@ document.addEventListener('click', async (event) => {
 
 render();
 if (storageProblem) toast(storageProblem, true);
+if (cloud) {
+  void refreshCloud();
+  window.addEventListener('online', () => refreshCloud());
+  window.addEventListener('focus', () => refreshCloud());
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void refreshCloud();
+  });
+  window.setInterval(() => {
+    if (!document.hidden && navigator.onLine) void refreshCloud();
+  }, 15000);
+}
