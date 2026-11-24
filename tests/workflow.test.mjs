@@ -1,0 +1,151 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseOrder, parseAmount } from '../docs/import.mjs';
+import {
+  createState,
+  cleanInvoice,
+  cleanClaim,
+  cleanExpense,
+  priceDetails,
+  financialReport,
+  warrantyFor,
+  nextNumber,
+  composeMessage,
+  readBackup,
+  mergeBackup,
+  csvString,
+} from '../docs/model.mjs';
+
+const day = '2026-11-25';
+const sampleEmail = 'akun@contoh.test';
+
+test('supplier receipt keeps foreign currency separate and reads the account', () => {
+  const input = [
+    'Order has been paid',
+    'Order code: PAY-CONTOH',
+    'Purchase date: 14/11/2026 18:34:39',
+    'Product: ChatGPT Plus 1M GPay BH24H',
+    'Quantity: 1',
+    'Amount: 100000 VND',
+    'Attached data:',
+    sampleEmail + '|SandiContoh|KEY-CONTOH',
+  ].join('\n');
+  const order = parseOrder(input);
+  assert.deepEqual(order.meta.amount, { original: '100000 VND', idr: null });
+  assert.equal(order.meta.date, '2026-11-14');
+  assert.equal(order.meta.product, 'ChatGPT Plus 1 Bulan');
+  assert.equal(order.meta.status, undefined);
+  assert.equal(order.accounts[0].email, sampleEmail);
+  assert.equal(parseAmount('Rp 80.000,00').idr, 80000);
+});
+
+test('change-mail report pairs verification by exact email and skips failures', () => {
+  const raw = [
+    '=== Sukses (1) ===',
+    sampleEmail + '|sandi|KEY',
+    sampleEmail + '+https://contoh.test/kode?t=simulasi',
+    'orang-lain@contoh.test----https://contoh.test/tidak-cocok',
+    '=== Gagal (1) ===',
+    'gagal@contoh.test|sandi|KEY',
+  ].join('\n');
+  const record = parseOrder(raw);
+  assert.equal(record.accounts.length, 1);
+  assert.equal(record.accounts[0].verification, 'https://contoh.test/kode?t=simulasi');
+  assert.equal(record.warnings.length, 2);
+});
+
+test('CSV, JSON and labelled text retain the same account fields', () => {
+  const csv = 'email,password,2fa\n' + sampleEmail + ',"sandi,contoh",KEY\n';
+  const json = JSON.stringify({ accounts: [{ email: sampleEmail, password: 'sandi,contoh', '2fa': 'KEY' }] });
+  const text = 'Email: ' + sampleEmail + '\nPassword: sandi,contoh\n2FA Key: KEY';
+  assert.deepEqual(parseOrder(csv).accounts, parseOrder(json).accounts);
+  assert.deepEqual(parseOrder(text).accounts, parseOrder(csv).accounts);
+  assert.equal(parseOrder('Order ID: ORDER-A\n' + csv + '\nOrder ID: ORDER-B').conflict, true);
+  assert.equal(parseOrder('curl https://contoh.test\nAuthorization: Bearer KEY-CONTOH').accounts.length, 0);
+});
+
+function invoice(fields = {}) {
+  return cleanInvoice({
+    id: 'inv-a',
+    number: 'JUU-261125-053',
+    date: day,
+    paymentDate: day,
+    status: 'paid',
+    packageId: 'short',
+    packageLabel: 'Garansi 3 Hari',
+    warrantyDays: 3,
+    price: 80000,
+    qty: 2,
+    unitCost: 50000,
+    discount: 5000,
+    fee: 2000,
+    ...fields,
+  });
+}
+
+test('report assigns payments, refunds, claim costs, and credits to their own dates', () => {
+  const state = createState();
+  const sale = invoice({ refund: 15000, refundDate: '2026-12-01' });
+  state.invoices.push(sale, invoice({ id: 'inv-b', qty: 1, status: 'pending' }));
+  state.claims.push(
+    cleanClaim({
+      id: 'claim-a',
+      number: 'JUU-GR-261125-001',
+      date: day,
+      costDate: day,
+      cost: 18000,
+      reimbursement: 5000,
+      reimbursementDate: '2026-12-02',
+      packageId: 'short',
+    }),
+  );
+  state.expenses.push(cleanExpense({ id: 'fee-a', date: day, name: 'Promosi', amount: 10000 }));
+  assert.equal(priceDetails(sale).gross, 40000);
+  const month = financialReport(state, { start: '2026-11-01', end: '2026-11-30' });
+  assert.equal(month.totals.revenue, 155000);
+  assert.equal(month.totals.gross, 55000);
+  assert.equal(month.totals.net, 25000);
+  assert.equal(month.packages.short.net, 35000);
+  assert.equal(month.receivable, 75000);
+  const december = financialReport(state, { start: '2026-12-01', end: '2026-12-31' });
+  assert.equal(december.totals.net, -10000);
+  state.invoices.push(invoice({ id: 'inv-c', unitCost: null }));
+  assert.equal(financialReport(state, {}).totals.missing, 1);
+});
+
+test('invoice numbers, warranty dates, and separate editable templates', () => {
+  const state = createState();
+  assert.equal(state.settings.packages.short.price, 80000);
+  assert.equal(state.settings.packages.full.price, 120000);
+  assert.equal(nextNumber(state, 'invoice', day).number, 'JUU-261125-053');
+  assert.equal(warrantyFor(invoice(), '2026-11-28').tone, 'green');
+  assert.equal(warrantyFor(invoice(), '2026-11-29').tone, 'red');
+  state.settings.invoiceTemplate = '{{nomor}} | {{total}} | {{bagian_akun}}';
+  state.settings.claimTemplate = '{{status}} → {{nomor_invoice}}';
+  const draft = { ...invoice(), accounts: parseOrder(sampleEmail + '|Sandi|KUNCI').accounts };
+  assert.match(composeMessage('invoice', draft, state), /JUU-261125-053 \| Rp155\.000.*DETAIL AKUN/s);
+  assert.equal(
+    composeMessage(
+      'claim',
+      { date: day, status: 'resolved', invoiceNumber: draft.number, packageId: 'short' },
+      state,
+    ),
+    'Selesai → JUU-261125-053',
+  );
+});
+
+test('backup excludes raw data and older copies cannot restore deleted rows', () => {
+  const base = createState();
+  base.invoices.push({
+    ...invoice({ updatedAt: '2026-11-25T10:00:00.000Z' }),
+    raw: 'not-in-backup',
+    accounts: [{ password: 'not-in-backup' }],
+  });
+  const read = readBackup(base);
+  assert.equal(Object.hasOwn(read.invoices[0], 'accounts'), false);
+  assert.equal(Object.hasOwn(read.invoices[0], 'raw'), false);
+  const current = createState();
+  current.deleted['inv-a'] = '2026-11-25T11:00:00.000Z';
+  assert.equal(mergeBackup(current, read).invoices.length, 0);
+  assert.equal(csvString([['=1+1', -50]]), '\uFEFF"\'=1+1",-50');
+});
