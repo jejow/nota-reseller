@@ -20,7 +20,7 @@ import {
   mergeBackup,
   csvString,
   VARIABLES,
-} from './model.mjs';
+} from './model.mjs?v=invoice-lunas';
 import { parseOrder, readImportFile, SAMPLE_TEXT } from './import.mjs';
 import { icon } from './icons.mjs';
 import {
@@ -40,9 +40,9 @@ import {
   settingsView,
   syncControl,
   templateFields,
-} from './views.mjs?v=sync-home';
+} from './views.mjs?v=invoice-lunas';
 import { mountChart } from './chart.mjs';
-import { CLOUD_URL, SyncError, createSyncedLedger } from './sync.mjs';
+import { CLOUD_URL, SyncError, createSyncedLedger } from './sync.mjs?v=invoice-lunas';
 
 const $ = (selector) => document.querySelector(selector);
 const views = ['dashboard', 'invoice', 'claim', 'history', 'finance', 'settings'];
@@ -141,9 +141,9 @@ function blankDraft(type, data = state) {
     unitCost: pack.cost,
     discount: 0,
     fee: 0,
-    status: 'pending',
+    status: 'paid',
     paymentMethod: '',
-    paymentDate: '',
+    paymentDate: shared.date,
     refund: 0,
     refundDate: '',
     notes: '',
@@ -426,6 +426,11 @@ function syncInvoiceDate(draft) {
   const field = $('[data-draft="date"]');
   field.readOnly = automatic;
   if (field.value !== draft.date) field.value = draft.date;
+  if (!draft.id && draft.status === 'paid' && !draft.touched.has('paymentDate')) {
+    draft.paymentDate = draft.date;
+    const paymentDateField = $('[data-draft="paymentDate"]');
+    if (paymentDateField.value !== draft.paymentDate) paymentDateField.value = draft.paymentDate;
+  }
 }
 
 function refreshOpenInvoice() {
@@ -809,7 +814,6 @@ function updateTemplatePreview() {
       invoiceNumber: 'JUU-CONTOH',
       resolution: 'Akun pengganti sudah disiapkan.',
     });
-  else Object.assign(draft, { status: 'paid', paymentDate: draft.date });
   $('#template-preview').textContent = settingsDraft[key].trim()
     ? composeMessage(type, draft, previewState)
     : 'Isi template untuk melihat hasilnya.';
@@ -930,7 +934,7 @@ function readDraftField(el) {
     draft[fieldName] = value;
     if (fieldName === 'dateMode' && !validDate(draft.date)) draft.date = today();
     if (fieldName === 'status' && type === 'invoice') {
-      if (value === 'paid') draft.paymentDate ||= today();
+      if (value === 'paid') draft.paymentDate ||= draft.id ? today() : draft.date;
       else Object.assign(draft, { paymentDate: '', refund: 0, refundDate: '' });
       syncEditorFields(draft);
     }

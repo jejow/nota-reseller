@@ -37,6 +37,8 @@ export function addDays(date, days) {
   return next.toISOString().slice(0, 10);
 }
 
+const WARRANTY_HEADING = '*🛡️ SYARAT & KETENTUAN GARANSI*';
+
 const LEGACY_TEMPLATES = {
   invoiceTemplate: `*{{judul_pembayaran}}*
 *{{toko}} · {{nomor}}*
@@ -83,8 +85,10 @@ Status: *{{status}}*
 
   loginGuide:
     'Gunakan email dan password pada detail akun untuk masuk. Jika diminta verifikasi, ikuti metode yang tercantum di detail akun.',
-  terms:
+  terms: [
     'Simpan nomor invoice untuk pengajuan klaim. Gunakan akun sesuai ketentuan layanan. Jika ada kendala akses, hubungi admin dengan menyertakan nomor invoice dan penjelasan kendalanya.',
+    'Simpan Order ID untuk pengajuan klaim. Jika ada kendala, sertakan Order ID dan jelaskan kendalanya. Pelanggaran ketentuan penggunaan layanan dapat membatalkan garansi.',
+  ],
 };
 
 export const invoiceTemplate = `*{{ikon_pembayaran}} {{judul_pembayaran}}*
@@ -107,7 +111,7 @@ Status pembayaran: {{status}}
 {{baris_panduan}}
 {{baris_aturan}}
 
-*🛡️ SYARAT & KETENTUAN GARANSI*
+${WARRANTY_HEADING}
 {{garansi}}
 {{ketentuan}}
 
@@ -177,8 +181,11 @@ const DEFAULT_SETTINGS = {
   loginGuide:
     '1. Buka halaman login layanan dan masukkan email serta password di atas.\n2. Jika diminta kode verifikasi, ikuti petunjuk di layar dan gunakan metode pada detail akun.',
   accountRules: 'Jaga kerahasiaan password dan kode verifikasi. Gunakan akun sesuai ketentuan layanan.',
-  terms:
-    'Simpan Order ID untuk pengajuan klaim. Jika ada kendala, sertakan Order ID dan jelaskan kendalanya. Pelanggaran ketentuan penggunaan layanan dapat membatalkan garansi.',
+  terms: [
+    '1. Garansi mencakup kendala akses akun selama masa garansi sesuai paket pada invoice.',
+    '2. Ajukan klaim ke admin selama masa garansi. Sertakan Order ID dan penjelasan kendala. Tangkapan layar bisa disertakan jika ada.',
+    '3. Penggunaan akun untuk aktivitas ilegal atau pelanggaran ketentuan layanan dapat membatalkan garansi.',
+  ].join('\n'),
   packages: {
     short: { label: 'Garansi 3 Hari', price: 80000, cost: null, days: 3 },
     full: { label: 'Full Garansi', price: 120000, cost: null, days: null },
@@ -569,7 +576,19 @@ export function composeMessage(type, draft, state) {
           : '',
     });
   }
-  return settings[isClaim ? 'claimTemplate' : 'invoiceTemplate']
+  let template = settings[isClaim ? 'claimTemplate' : 'invoiceTemplate'];
+  if (
+    !isClaim &&
+    values.ketentuan &&
+    !/\{\{\s*ketentuan\s*\}\}/.test(template) &&
+    !template.includes(values.ketentuan)
+  ) {
+    const periodLine = /^.*\{\{[ \t]*garansi[ \t]*\}\}.*$/m;
+    template = periodLine.test(template)
+      ? template.replace(periodLine, '$&\n{{ketentuan}}')
+      : `${template}\n\n${WARRANTY_HEADING}\n{{garansi}}\n{{ketentuan}}`;
+  }
+  return template
     .replace(/\r\n/g, '\n')
     .replace(/^[\t ]*\{\{[\t ]*([a-z_]+)[\t ]*\}\}[\t ]*\n/gm, (line, key) =>
       Object.hasOwn(values, key) && !String(values[key] ?? '').trim() ? '' : line,
@@ -667,7 +686,9 @@ export function cleanSettings(values) {
   const textSetting = (key, limit, allowEmpty = false) => {
     if (typeof values[key] !== 'string') return defaults[key];
     const text = str(values[key], limit);
-    return text === LEGACY_TEMPLATES[key] || (!text && !allowEmpty) ? defaults[key] : text;
+    const previous = LEGACY_TEMPLATES[key];
+    const legacyDefault = Array.isArray(previous) ? previous.includes(text) : text === previous;
+    return legacyDefault || (!text && !allowEmpty) ? defaults[key] : text;
   };
   return {
     business: str(values.business, 60) || defaults.business,

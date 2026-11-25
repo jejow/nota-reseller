@@ -12,7 +12,7 @@ import {
   warrantyFor,
   nextNumber,
   composeMessage,
-} from './model.mjs';
+} from './model.mjs?v=invoice-lunas';
 
 export const esc = (value) =>
   String(value ?? '').replace(
@@ -412,7 +412,7 @@ function invoiceFields(draft, state) {
       ${field('Metode pembayaran', 'paymentMethod', draft.paymentMethod, { placeholder: 'Transfer, QRIS, dll.', limit: 80 })}
     </div>
     <div class="form-section fields" id="payment-fields"${hide(draft.status !== 'paid')}>
-      ${field('Tanggal pembayaran', 'paymentDate', draft.paymentDate, { type: 'date', help: 'Penjualan masuk laporan pada tanggal ini.' })}
+      ${field('Tanggal pembayaran', 'paymentDate', draft.paymentDate, { type: 'date', help: 'Tanggal untuk laporan penjualan dan awal masa garansi.' })}
       ${amountField('Nominal refund', 'refund', draft.refund, { placeholder: 'Opsional' })}
       <div id="refund-date-field"${hide(!draft.refund)}>${field('Tanggal refund', 'refundDate', draft.refundDate, { type: 'date' })}</div>
     </div>
@@ -788,7 +788,7 @@ export function settingsView(draft, type, sync) {
         ${area('Instruksi pembayaran', 'paymentInfo', draft.paymentInfo, { ...cfg, wide: true, limit: 700, placeholder: 'Tampil pada invoice menunggu pembayaran' })}
         ${area('Panduan akses akun', 'loginGuide', draft.loginGuide, { ...cfg, wide: true, limit: 1600 })}
         ${area('Aturan penggunaan akun', 'accountRules', draft.accountRules, { ...cfg, wide: true, limit: 1600 })}
-        ${area('Ketentuan garansi', 'terms', draft.terms, { ...cfg, wide: true, limit: 2200 })}
+        ${area('Ketentuan garansi', 'terms', draft.terms, { ...cfg, wide: true, limit: 2200, rows: 6 })}
       </div>`,
       )}
       ${formCard(

@@ -1,4 +1,4 @@
-import { createState, newId, readBackup } from './model.mjs';
+import { createState, newId, readBackup } from './model.mjs?v=invoice-lunas';
 
 export const CLOUD_URL = 'https://nota-reseller-sync.soppy-wonkier1jwillo.chatgpt.site/';
 

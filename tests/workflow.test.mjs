@@ -163,6 +163,36 @@ test('invoice copy follows payment status and fills the order date and account s
   assert.doesNotMatch(pending, /Pembayaran Diterima|DETAIL AKUN|CARA LOGIN/);
 });
 
+test('invoice includes package validity and claim instructions with default or custom templates', () => {
+  const state = createState();
+  const paid = composeMessage('invoice', invoice(), state);
+  assert.match(paid, /SYARAT & KETENTUAN GARANSI.*28 Nov 2026.*Sertakan Order ID/s);
+  const full = invoice({ packageId: 'full', packageLabel: 'Full Garansi', warrantyDays: null });
+  assert.match(composeMessage('invoice', full, state), /Full Garansi berlaku selama masa aktif paket/);
+
+  state.settings.terms = 'Laporkan kendala ke admin.';
+  state.settings.invoiceTemplate = 'Invoice {{nomor}}';
+  assert.match(
+    composeMessage('invoice', full, state),
+    /SYARAT & KETENTUAN GARANSI.*Laporkan kendala ke admin/s,
+  );
+  state.settings.invoiceTemplate = 'Masa aktif: {{garansi}}\nTerima kasih.';
+  assert.match(
+    composeMessage('invoice', full, state),
+    /masa aktif paket\.\nLaporkan kendala ke admin\.\nTerima kasih/,
+  );
+  state.settings.invoiceTemplate = 'Ketentuan toko\n{{ketentuan}}';
+  assert.equal(composeMessage('invoice', full, state), 'Ketentuan toko\nLaporkan kendala ke admin.');
+});
+
+test('the earlier standard warranty text upgrades when reading a saved ledger', () => {
+  const state = createState();
+  const currentTerms = state.settings.terms;
+  state.settings.terms =
+    'Simpan Order ID untuk pengajuan klaim. Jika ada kendala, sertakan Order ID dan jelaskan kendalanya. Pelanggaran ketentuan penggunaan layanan dapat membatalkan garansi.';
+  assert.equal(readBackup(state).settings.terms, currentTerms);
+});
+
 test('claim copy responds to its status and mentions a replacement only when provided', () => {
   const state = createState();
   const claim = cleanClaim({
