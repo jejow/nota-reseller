@@ -5,18 +5,18 @@
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
     <meta
       name="description"
-      content="Buat invoice, kelola klaim garansi, dan buka pembukuan tersinkron dari HP atau PC."
+      content="Buat invoice dari data akun dan sinkronkan pembukuan lewat repositori privat GitHub."
     />
     <meta name="theme-color" content="#f5f7f5" />
     <meta name="referrer" content="no-referrer" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
+      content="default-src 'self'; connect-src 'self' https://api.github.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
     />
     <title>Nota Reseller · Invoice & Keuangan</title>
     <link rel="icon" href="./mark.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./style.css" />
-    <script type="module" src="./app.mjs?v=invoice-lunas"></script>
+    <script type="module" src="./app.mjs?v=github-sync"></script>
   </head>
   <body>
     <a class="skip-link" href="#view">Lewati ke konten</a>

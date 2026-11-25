@@ -1,6 +1,4 @@
-import { createState, newId, readBackup } from './model.mjs?v=invoice-lunas';
-
-export const CLOUD_URL = 'https://nota-reseller-sync.soppy-wonkier1jwillo.chatgpt.site/';
+import { createState, newId, readBackup } from './model.mjs?v=github-sync';
 
 export class SyncError extends Error {
   constructor(message, retryable = false) {

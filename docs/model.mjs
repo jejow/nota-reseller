@@ -502,7 +502,7 @@ export function accountBlock(accounts, claim) {
         `Email: ${account.email}`,
         account.password ? `Password: ${account.password}` : '',
         account.key ? `2FA Key: ${account.key}` : '',
-        account.verification ? `Link verifikasi email: ${account.verification}` : '',
+        account.verification ? `Tautan OTP email: ${account.verification}` : '',
       ]
         .filter(Boolean)
         .join('\n'),

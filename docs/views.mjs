@@ -12,7 +12,7 @@ import {
   warrantyFor,
   nextNumber,
   composeMessage,
-} from './model.mjs?v=invoice-lunas';
+} from './model.mjs?v=github-sync';
 
 export const esc = (value) =>
   String(value ?? '').replace(
@@ -60,11 +60,10 @@ const brand = () => `<button class="brand" type="button" data-action="nav" data-
   <span class="brand-mark">${icon('receipt')}</span><span class="brand-text">Nota Reseller<small>Panel penjualan</small></span>
 </button>`;
 
-const syncedLink = (url, label = 'Versi sinkron', style = 'btn-outline btn-sm sync-link') =>
-  `<a class="btn ${style}" href="${esc(url)}">${icon('link')}${label}</a>`;
-
 export function syncControl(sync) {
-  if (sync.mode === 'local') return syncedLink(sync.url);
+  if (sync.mode === 'local' || sync.mode === 'locked') {
+    return btn('Sinkron GitHub', 'link', 'github-connect', 'outline btn-sm sync-link');
+  }
   const [label, glyph] = {
     loading: ['Menghubungkan', 'clock'],
     ready: ['Tersinkron', 'checkCircle'],
@@ -84,7 +83,7 @@ export function chrome(view, state, sync) {
     sidebar: `${brand()}<nav class="sidebar-nav" aria-label="Navigasi utama">
       <p class="nav-label">Ruang kerja</p>${['dashboard', 'invoice', 'claim', 'history', 'finance'].map((id) => navButton(id)).join('')}
       <p class="nav-label">Preferensi</p>${navButton('settings')}
-    </nav><div class="side-foot">${icon('lock')}<span>${sync.mode === 'cloud' ? 'Pembukuan privat' : 'Data di browser ini'}</span></div>`,
+    </nav><div class="side-foot">${icon('lock')}<span>${sync.mode === 'local' ? 'Data di browser ini' : 'Pembukuan privat'}</span></div>`,
     topbar: `<div class="breadcrumbs"><span>Ruang kerja</span>${icon('chevronRight')}<strong>${NAV[view][0]}</strong></div>
       <div class="mobile-brand">${brand()}</div>
       <div class="top-actions">
@@ -195,10 +194,10 @@ function hero(sync) {
   const local = sync?.mode === 'local';
   const title = local ? 'Satu pembukuan di HP dan PC' : 'Invoice siap kirim dalam hitungan detik.';
   const subtitle = local
-    ? 'Gunakan akun ChatGPT yang sama untuk membuka invoice, klaim garansi, dan laporan dari perangkat lain.'
+    ? 'Hubungkan repositori privat GitHub untuk menyinkronkan invoice, klaim garansi, dan laporan langsung dari halaman ini.'
     : 'Tempel data akun atau unggah file. Pilih paket garansi, cek pesan, lalu salin untuk pelanggan.';
   const actions = local
-    ? syncedLink(sync.url, 'Buka versi sinkron', 'btn-hero-primary') +
+    ? btn('Hubungkan GitHub', 'link', 'github-connect', 'hero-primary') +
       btn('Buat invoice lokal', 'plus', 'new-invoice', 'hero-secondary')
     : btn('Buat invoice', 'plus', 'new-invoice', 'hero-primary') +
       btn('Klaim garansi', 'shield', 'new-claim', 'hero-secondary');
@@ -344,10 +343,20 @@ function importContents(draft, isClaim) {
 
 export function importFeedback(draft) {
   const source = draft.source;
+  const coverage = Object.entries({
+    email: 'Email',
+    password: 'Password',
+    key: '2FA key',
+    verification: 'Tautan OTP email',
+  }).map(
+    ([key, label]) =>
+      `${label} ${draft.accounts.filter((account) => account[key]).length}/${draft.parsedCount}`,
+  );
   return `${draft.importBusy ? banner('Membaca file…') : ''}
     ${draft.importError ? banner(draft.importError, 'red', 'alert') : ''}
     ${(draft.importWarnings || []).map((message) => banner(message, 'amber', 'alert')).join('')}
     ${draft.parsedCount ? `<p class="import-meta" style="color:#176346">${icon('checkCircle')} ${draft.parsedCount} akun terbaca${source ? ' dari ' + esc(source) : ''}.</p>` : ''}
+    ${draft.parsedCount ? `<p class="import-meta">${coverage.join(' · ')}</p>` : ''}
     ${draft.supplierAmount ? `<p class="import-meta">Nominal supplier <strong>${esc(draft.supplierAmount)}</strong></p>` : ''}
     ${
       draft.supplierDate
@@ -366,7 +375,7 @@ export function accountRows(draft) {
     ${field('Email', 'email', a.email, { attr: 'data-account', type: 'email', extra: `data-index="${index}" autocomplete="off" spellcheck="false"` })}
     ${field('Password', 'password', a.password, { attr: 'data-account', type: 'password', extra: `data-index="${index}" autocomplete="new-password"`, limit: 500 })}
     ${field('2FA Key', 'key', a.key, { attr: 'data-account', type: 'password', extra: `data-index="${index}" autocomplete="new-password"`, limit: 600 })}
-    ${field('Link verifikasi email', 'verification', a.verification, { attr: 'data-account', type: 'url', extra: `data-index="${index}" autocomplete="off"`, limit: 3000 })}
+    ${field('Tautan OTP email', 'verification', a.verification, { attr: 'data-account', type: 'url', extra: `data-index="${index}" autocomplete="off"`, limit: 3000 })}
   </div></div>`,
     )
     .join('');
@@ -750,6 +759,7 @@ export function templateFields(draft, type) {
 
 export function settingsView(draft, type, sync) {
   const cfg = { attr: 'data-setting' };
+  const activeSync = sync.mode === 'github' || sync.mode === 'cloud';
   const save =
     '<button type="submit" class="btn btn-primary" form="settings-form">' +
     icon('save') +
@@ -759,20 +769,21 @@ export function settingsView(draft, type, sync) {
       <section class="card wide">
         ${headCard(
           'Sinkronisasi antar perangkat',
-          sync.mode === 'cloud'
-            ? 'Masuk dengan akun ChatGPT yang sama dari HP atau PC untuk membuka pembukuan ini.'
-            : 'Versi sinkron menyimpan invoice, klaim, pengeluaran, dan pengaturan di database privat.',
+          activeSync
+            ? 'Perubahan tersimpan otomatis dan tersedia di perangkat lain yang membuka pembukuan ini.'
+            : 'Hubungkan repo privat GitHub untuk menyinkronkan transaksi, pengaturan, dan template.',
         )}
         <div class="card-body">
           <p class="field-help">${
-            sync.mode === 'cloud'
-              ? 'Untuk memindahkan riwayat lama dari versi lokal, impor file backup di bawah.'
-              : 'Untuk membawa riwayat dari browser ini, unduh backup di bawah lalu impor di versi sinkron.'
+            activeSync
+              ? 'Gunakan token repo dan kata sandi sinkronisasi yang sama saat membuka dari perangkat lain.'
+              : 'Data yang sudah tersimpan di browser ini digabung saat sambungan dibuka.'
           }</p>
           <div class="actions" style="margin-top:10px">${
-            sync.mode === 'cloud'
-              ? btn('Sinkronkan sekarang', 'history', 'sync-now')
-              : syncedLink(sync.url, 'Buka versi sinkron')
+            activeSync
+              ? btn('Sinkronkan sekarang', 'history', 'sync-now') +
+                (sync.mode === 'github' ? btn('Ganti token GitHub', '', 'github-relink', 'plain') : '')
+              : btn('Hubungkan GitHub', 'link', 'github-connect')
           }</div>
         </div>
       </section>

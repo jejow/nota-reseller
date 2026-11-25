@@ -65,6 +65,44 @@ test('CSV, JSON and labelled text retain the same account fields', () => {
   assert.equal(parseOrder('curl https://contoh.test\nAuthorization: Bearer KEY-CONTOH').accounts.length, 0);
 });
 
+test('AIS dash separators keep the exact account email and pair its OTP link', () => {
+  const verification = 'https://otp.example.test/api/v1/mailboxes/address%40mail.test/code?ref=example';
+  const raw = sampleEmail + '|Pass!?#|JBSWY3DPEHPK3PXP\n' + sampleEmail + '----' + verification;
+  const { accounts, warnings } = parseOrder(raw);
+  assert.deepEqual(accounts, [
+    { email: sampleEmail, password: 'Pass!?#', key: 'JBSWY3DPEHPK3PXP', verification },
+  ]);
+  assert.deepEqual(warnings, []);
+});
+
+test('shop exports extract Base32 from a 2FA URL and distinguish the email OTP link', () => {
+  const key = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+  const generator = 'https://2fa.example.test/' + key;
+  const verification = 'https://otp.example.test/code?email=akun%40contoh.test';
+  for (const separator of ['|', '----', ':']) {
+    const raw = [
+      'Shop Order Delivery',
+      'Order ID: TEST-123',
+      'Hướng dẫn đăng nhập',
+      'https://guide.example.test/example',
+      '1. ' + [sampleEmail, 'Sandi&khusus', generator].join(separator),
+      'Link OTP Email: ' + verification,
+    ].join('\n');
+    assert.deepEqual(parseOrder(raw).accounts, [
+      { email: sampleEmail, password: 'Sandi&khusus', key, verification },
+    ]);
+  }
+  const labelled = [
+    '📧 Email: ' + sampleEmail,
+    'Password: Sandi:khusus',
+    'Authenticator Key: otpauth://totp/Contoh?secret=' + key.toLowerCase(),
+    'https://guide.example.test/support',
+  ].join('\n');
+  assert.deepEqual(parseOrder(labelled).accounts, [
+    { email: sampleEmail, password: 'Sandi:khusus', key, verification: '' },
+  ]);
+});
+
 function invoice(fields = {}) {
   return cleanInvoice({
     id: 'inv-a',

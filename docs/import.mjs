@@ -4,9 +4,19 @@ export const SAMPLE_TEXT = 'contoh@pelanggan.example|SandiContoh!|KUNCI-CONTOH';
 export const MAX_IMPORT = 8 * 1024 * 1024;
 export const MAX_TEXT = 250000;
 
-const emailSource = "[a-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@[a-z0-9-]+(?:\\.[a-z0-9-]+)+";
+const domainLabel = '[a-z0-9](?:[a-z0-9-]*[a-z0-9])?';
+const emailSource =
+  "[a-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@" +
+  domainLabel +
+  '(?:\\.' +
+  domainLabel +
+  ')*?\\.(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})';
 const emailOnly = new RegExp('^' + emailSource + '$', 'i');
-const pairedLink = new RegExp('^(' + emailSource + ')(?:-{3,}|\\+|\\s*[:=]\\s*)(https?://\\S+)$', 'i');
+const pairedLink = new RegExp(
+  '^(' + emailSource + ')\\s*(?:-{3,}|\\+|->|=>|[:=])\\s*((?:https?|otpauth)://\\S+)$',
+  'i',
+);
+const compactRow = new RegExp('^(' + emailSource + ')[ ]*(-{3,}|[|:,;\\t])[ ]*(.+)$', 'i');
 const labelKey = (value) =>
   String(value || '')
     .toLowerCase()
@@ -45,19 +55,63 @@ function parseDate(value) {
   return validDate(sortable) ? sortable : '';
 }
 
-function normalizeLink(value) {
+function totpSecret(value) {
+  const key = String(value || '')
+    .replace(/[\s-]+/g, '')
+    .toUpperCase();
+  return /^[A-Z2-7]{16,128}={0,6}$/.test(key) ? key : '';
+}
+
+function credentialLink(value) {
+  const text = trimmed(value, 3000).replace(/^<([^>]+)>$/, '$1');
+  if (!/^(?:https?|otpauth):\/\//i.test(text) || /\s/.test(text)) return null;
   try {
-    const link = new URL(trimmed(value, 3000));
-    return ['https:', 'http:'].includes(link.protocol) ? link.href : '';
+    const url = new URL(text);
+    if (url.username || url.password) return null;
+    const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    const isAuthenticator =
+      url.protocol === 'otpauth:' ||
+      /(?:^|[.-])(?:2fa|totp|mfa|authenticator)(?:[.-]|$)/i.test(url.hostname) ||
+      segments.some((segment) => /^(?:2fa|totp|authenticator)$/i.test(segment));
+    if (isAuthenticator) {
+      const secret = [url.searchParams.get('secret'), url.searchParams.get('key'), segments.at(-1)]
+        .map(totpSecret)
+        .find(Boolean);
+      return { type: 'key', value: secret || '' };
+    }
+    return { type: 'verification', value: text, url };
   } catch {
-    return '';
+    return null;
   }
 }
 
 const accountAliases = {
-  email: ['email', 'emailakun', 'accountemail', 'alamatemail', 'username', 'user', 'loginemail'],
-  password: ['password', 'pass', 'pw', 'sandi', 'katasandi', 'accountpassword'],
-  key: ['2fa', '2fakey', 'key2fa', 'secret', 'secretkey', 'authenticator', 'totp', 'totpsecret'],
+  email: [
+    'email',
+    'emailakun',
+    'emailaddress',
+    'accountemail',
+    'alamatemail',
+    'username',
+    'user',
+    'loginemail',
+  ],
+  password: ['password', 'pass', 'pw', 'pwd', 'sandi', 'katasandi', 'accountpassword', 'loginpassword'],
+  key: [
+    '2fa',
+    '2fakey',
+    'key2fa',
+    '2fasecret',
+    '2fasecretkey',
+    'secret',
+    'secretkey',
+    'authenticator',
+    'authenticatorkey',
+    'totp',
+    'totpsecret',
+    'totpkey',
+    'otpauth',
+  ],
   verification: [
     'verification',
     'verificationurl',
@@ -71,6 +125,15 @@ const accountAliases = {
     'getcodelink',
     'verificationemaillink',
     'emaillink',
+    'otpemail',
+    'otpemaillink',
+    'emailotp',
+    'emailotplink',
+    'linkotp',
+    'linkotpemail',
+    'otplink',
+    'urlotp',
+    'tautanotpemail',
   ],
 };
 const metadataAliases = {
@@ -107,12 +170,18 @@ const aliasValue = (fields, aliases) => first(...aliases.map((alias) => fields[a
 
 function makeAccount(fields) {
   const email = trimmed(fields.email, 320);
+  const keyLink = credentialLink(fields.key);
+  const otpLink = credentialLink(fields.verification);
   return emailOnly.test(email)
     ? {
         email,
         password: trimmed(fields.password, 500),
-        key: trimmed(fields.key, 600),
-        verification: normalizeLink(fields.verification),
+        key:
+          keyLink?.type === 'key'
+            ? keyLink.value
+            : (!keyLink && (totpSecret(fields.key) || trimmed(fields.key, 600))) ||
+              (otpLink?.type === 'key' ? otpLink.value : ''),
+        verification: otpLink?.type === 'verification' ? otpLink.value : '',
       }
     : null;
 }
@@ -143,6 +212,54 @@ function csvRows(text, delimiter) {
   return rows;
 }
 
+function colonCells(text) {
+  const link = text.match(/(?:^|:)\s*(?=(?:https?|otpauth):\/\/)/i);
+  const prefix = (link ? text.slice(0, link.index) : text).trim();
+  const parts = prefix.split(':');
+  const last = parts.at(-1);
+  const cells =
+    parts.length > 1 && (totpSecret(last) || (!link && parts.length === 2))
+      ? [parts.slice(0, -1).join(':'), last]
+      : [prefix];
+  if (link) cells.push(text.slice(link.index + link[0].length));
+  return cells;
+}
+
+function compactAccount(line) {
+  const row = line.match(compactRow);
+  if (!row) return null;
+  const [, email, delimiter, raw] = row;
+  const cells =
+    delimiter === ':'
+      ? colonCells(raw)
+      : delimiter.startsWith('-')
+        ? raw.split(/-{3,}/)
+        : (csvRows(raw, delimiter)[0] ?? []);
+  const fields = { email };
+  const plain = [];
+  for (const [index, cell] of cells.entries()) {
+    const named = cell.match(/^([^:=]{1,35})[:=]\s*(.+)$/);
+    const field = named && fieldFor(labelKey(named[1]), accountAliases);
+    if (['password', 'key', 'verification'].includes(field)) {
+      fields[field] ??= named[2];
+      continue;
+    }
+    const link = credentialLink(cell);
+    if (link) fields[link.type] ||= link.value;
+    else plain.push({ index, cell });
+  }
+  fields.password ??= plain.find(({ index }) => index === 0)?.cell || '';
+  fields.key ||= plain.find(({ index }) => index === 1)?.cell || '';
+  return fields;
+}
+
+function looksLikeEmailOtp(link) {
+  return (
+    /(?:^|[/_-])(?:otp|verify|verification|inbox|code|getcode|kode)(?:[/_.-]|$)/i.test(link.url.pathname) ||
+    link.url.searchParams.has('email')
+  );
+}
+
 export function parseOrder(raw, filename = '') {
   const input = String(raw || '')
     .replace(/^\uFEFF/, '')
@@ -159,6 +276,18 @@ export function parseOrder(raw, filename = '') {
   let receiptCount = 0;
   let skippedFailed = 0;
   let technical = false;
+  let conflictingLinks = false;
+
+  function rememberLink(email, link) {
+    if (!link?.value) return;
+    const identity = email.toLowerCase();
+    const fields = links.get(identity) ?? { email };
+    if (Object.hasOwn(fields, link.type) && fields[link.type] !== link.value) {
+      conflictingLinks = true;
+      fields[link.type] = '';
+    } else fields[link.type] = link.value;
+    links.set(identity, fields);
+  }
 
   function remember(fields) {
     const account = makeAccount(fields);
@@ -266,12 +395,12 @@ export function parseOrder(raw, filename = '') {
         technical = true;
         continue;
       }
-      line = line.replace(/^(?:[*_>]+\s*|\d+[.)]\s+)/, '');
-      line = line.replace(/^(?:attached data|account|akun)\s*:\s*/i, '');
+      line = line.replace(/^(?:[*_>•▪]+[ \t]*|\d+[.)]\s+|[📧🔐🔑🔗]\s*)+/u, '');
+      line = line.replace(/^(?:attached data|account|akun)(?:\s+\d+)?\s*:\s*/i, '');
       if (!line) continue;
       const pair = line.match(pairedLink);
       if (pair) {
-        links.set(pair[1].toLowerCase(), normalizeLink(pair[2]));
+        rememberLink(pair[1], credentialLink(pair[2]));
         continue;
       }
       const label = line.match(/^([^:=|@]{1,45})[:=]\*?\s*(.+)$/);
@@ -281,9 +410,10 @@ export function parseOrder(raw, filename = '') {
         if (accountField) {
           if (accountField === 'email') {
             remember(active);
-            active = {};
+            active = compactAccount(label[2]) ?? { email: label[2] };
+          } else {
+            active[accountField] = label[2];
           }
-          active[accountField] = label[2];
           continue;
         }
         const metaField = fieldFor(name, metadataAliases);
@@ -293,32 +423,20 @@ export function parseOrder(raw, filename = '') {
         }
       }
 
-      const parts = line.includes('|')
-        ? line.split('|')
-        : line.includes('\t')
-          ? line.split('\t')
-          : line.includes(';')
-            ? csvRows(line, ';')[0]
-            : line.includes(',')
-              ? csvRows(line, ',')[0]
-              : line.match(new RegExp('^(' + emailSource + '):(.*)$', 'i'))?.slice(1);
-      if (parts?.length >= 2 && emailOnly.test(parts[0].trim())) {
+      const compact = compactAccount(line);
+      if (compact) {
         remember(active);
-        const lastFields =
-          parts.length === 2 && !/[|,;\t]/.test(line) ? parts[1].split(/:(?!(?:\/\/))/, 2) : parts.slice(1);
-        active = {
-          email: parts[0],
-          password: lastFields[0],
-          key: normalizeLink(lastFields[1]) ? '' : lastFields[1],
-          verification: normalizeLink(lastFields[2]) || normalizeLink(lastFields[1]),
-        };
-        remember(active);
+        active = compact;
         continue;
       }
       if (emailOnly.test(line)) {
         remember(active);
         active = { email: line };
-      } else if (active.email && normalizeLink(line)) active.verification ||= normalizeLink(line);
+      } else if (active.email) {
+        const link = credentialLink(line);
+        if (link?.type === 'key') active.key ||= link.value;
+        if (link?.type === 'verification' && looksLikeEmailOtp(link)) active.verification ||= link.value;
+      }
     }
     remember(active);
   }
@@ -334,10 +452,17 @@ export function parseOrder(raw, filename = '') {
   if (!result.meta.reference)
     result.meta.reference =
       filename.match(/^(AIS-[\w-]+|data_[\w-]+)\.[^.]+$/i)?.[1]?.replace(/^data_/i, '') || '';
-  result.accounts = [...known.values()].map((account) => ({
-    ...account,
-    verification: account.verification || links.get(account.email.toLowerCase()) || '',
-  }));
+  if (!known.size && !technical) for (const account of links.values()) remember(account);
+  result.accounts = [...known.values()].map((account) => {
+    const extras = links.get(account.email.toLowerCase());
+    return {
+      ...account,
+      key: account.key || extras?.key || '',
+      verification: account.verification || extras?.verification || '',
+    };
+  });
+  if (conflictingLinks)
+    result.warnings.push('Ada tautan berbeda untuk email yang sama. Periksa di detail akun.');
   if ([...links.keys()].some((email) => !known.has(email))) {
     result.warnings.push(
       'Ada tautan verifikasi untuk email yang tidak cocok. Periksa email sebelum menambahkan tautannya secara manual.',

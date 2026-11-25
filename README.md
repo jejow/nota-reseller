@@ -4,13 +4,13 @@ Panel JUU untuk membuat invoice, mencatat klaim garansi, dan memantau laba resel
 
 ## Sinkronisasi antar perangkat
 
-Buka [Nota Reseller versi sinkron](https://nota-reseller-sync.soppy-wonkier1jwillo.chatgpt.site/) dan masuk dengan akun ChatGPT yang sama di setiap perangkat. Invoice, klaim, pengeluaran, harga paket, dan template pesan tersimpan di database privat. Aplikasi mengambil perubahan secara berkala ketika halaman terbuka dan saat kembali ke tab. Gunakan **Sinkronkan sekarang** untuk langsung mengambil perubahan.
+Buka [Nota Reseller di GitHub Pages](https://jejow.github.io/nota-reseller/) lalu pilih **Hubungkan GitHub**. Buat token Fine-grained di GitHub untuk repo privat `jejow/nota-reseller-data` dengan izin **Contents: Read and write**. Masukkan token dan kata sandi sinkronisasi minimal 12 karakter di aplikasi. Gunakan kata sandi yang sama di setiap perangkat. Simpan kata sandinya agar pembukuan terenkripsi dapat dibuka kembali.
 
-Riwayat yang sudah dibuat di versi GitHub Pages dapat dipindahkan sekali melalui **Pengaturan → Unduh backup**. Buka versi sinkron, pilih **Pengaturan → Impor backup**, lalu gabungkan file tersebut.
+Invoice, klaim, pengeluaran, harga paket, dan template disimpan sebagai pembukuan terenkripsi di repo privat. Data lokal yang sudah ada digabung berdasarkan ID dan waktu perubahan. Aplikasi menyimpan perubahan saat tombol simpan digunakan dan mengambil perubahan perangkat lain ketika tab dibuka atau secara berkala. Gunakan **Sinkronkan sekarang** untuk memperbarui tampilan segera. Jika token kedaluwarsa, pilih **Pengaturan → Ganti token GitHub** dan pakai kata sandi yang sama.
 
 ## Mulai memakai
 
-Pembukuan baru dimulai dari Rp0. Pilih versi sinkron untuk menggunakan satu pembukuan dari beberapa perangkat.
+Pembukuan baru dimulai dari Rp0. Hubungkan GitHub untuk menggunakan satu pembukuan dari beberapa perangkat.
 
 1. Buka **Pengaturan** untuk melengkapi identitas toko, instruksi pembayaran, panduan akses, dan biaya modal default. Harga awal **Garansi 3 Hari Rp80.000** dan **Full Garansi Rp120.000** per akun.
 2. Buka **Buat invoice**. Unggah satu order atau tempel data akun. Status awal invoice baru adalah **Lunas** dan tanggal pembayaran mengikuti tanggal invoice sampai diubah manual. Pilih **Menunggu** jika pelanggan belum membayar.
@@ -19,9 +19,9 @@ Pembukuan baru dimulai dari Rp0. Pilih versi sinkron untuk menggunakan satu pemb
 
 ## Format impor
 
-- TXT atau teks tempel dengan format satu akun per baris, seperti `email@contoh.test|sandi|2FA`. Kolom keempat bisa memuat link verifikasi.
+- TXT atau teks tempel dengan format satu akun per baris, seperti `email@contoh.test|sandi|2FA`. Format bertanda titik dua, empat tanda hubung, dan baris berlabel juga terbaca. Tautan 2FA yang memuat kunci dapat diurai menjadi **2FA Key**. Tautan OTP email tampil pada kolom tersendiri.
 - Laporan supplier dengan label seperti `Order code`, `Product`, `Quantity`, `Amount`, dan `Attached data`. Nominal mata uang asing tampil sebagai referensi. Masukkan ekuivalen rupiah di **Modal per akun**.
-- Laporan ganti email bisa mencantumkan tautan terpisah seperti `email@contoh.test----https://contoh.test/verifikasi`. Tautan dipasangkan berdasarkan email yang sama.
+- Laporan AIS dan ganti email bisa mencantumkan tautan terpisah seperti `email@contoh.test----https://contoh.test/verifikasi`. Alamat di awal baris mengaitkan tautan dengan akun yang sesuai.
 - CSV dan TSV memakai header, misalnya `email,password,2fa,verification`. JSON menerima satu objek, array akun, atau objek dengan properti `accounts`.
 - PDF harus memiliki teks yang bisa diseleksi. Batas impor 8 MB dan 50 halaman untuk PDF. Gunakan satu order per impor, dengan satu atau beberapa akun.
 - Jika format belum dikenali, isi **Detail akun manual** atau edit **Catatan untuk pelanggan**. Perintah curl dan kunci API di luar kolom akun dilewati.
@@ -46,7 +46,7 @@ Pratinjau invoice menyertakan masa berlaku paket dan petunjuk klaim. Ubah teks s
 
 ## Cadangan dan penyimpanan
 
-Versi GitHub Pages menyimpan pembukuan di browser. Versi sinkron menyimpan pembukuan di database saat terkoneksi. Gunakan **Pengaturan → Unduh backup** untuk membuat salinan. Impor menggabungkan transaksi berdasarkan ID internal dan mengambil versi terbaru dari transaksi yang sama.
+GitHub Pages bisa menyimpan di browser atau menyinkronkan pembukuan ke repo privat setelah dihubungkan. Gunakan **Pengaturan → Unduh backup** untuk membuat salinan. Impor menggabungkan transaksi berdasarkan ID internal dan mengambil versi terbaru dari transaksi yang sama.
 
 Kata sandi, 2FA, tautan verifikasi, dan draf pesan hanya ada selama sesi halaman. Simpan TXT atau salin pesan ketika perlu menyimpan hasil untuk dikirim. File order dan teks diproses di browser.
 
@@ -54,9 +54,7 @@ Kata sandi, 2FA, tautan verifikasi, dan draf pesan hanya ada selama sesi halaman
 
 [Buka Nota Reseller](https://jejow.github.io/nota-reseller/)
 
-Situs dipublikasikan dari folder `docs` pada branch `main`. Pilih **Buka versi sinkron** dari halaman utama untuk membuka pembukuan berbasis database.
-
-Versi sinkron dibangun dari sumber yang sama dengan `npm ci` dan `npm run build:cloud`. Worker membutuhkan autentikasi ChatGPT Sites dan binding D1 bernama `DB`. Skema SQL berada di folder `drizzle`.
+Situs dipublikasikan dari folder `docs` pada branch `main`. Pilih **Hubungkan GitHub** dari halaman utama untuk menyiapkan sinkronisasi di halaman tersebut.
 
 ## Menjalankan sumber secara lokal
 

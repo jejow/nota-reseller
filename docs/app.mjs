@@ -20,8 +20,8 @@ import {
   mergeBackup,
   csvString,
   VARIABLES,
-} from './model.mjs?v=invoice-lunas';
-import { parseOrder, readImportFile, SAMPLE_TEXT } from './import.mjs';
+} from './model.mjs?v=github-sync';
+import { parseOrder, readImportFile, SAMPLE_TEXT } from './import.mjs?v=github-sync';
 import { icon } from './icons.mjs';
 import {
   esc,
@@ -40,17 +40,26 @@ import {
   settingsView,
   syncControl,
   templateFields,
-} from './views.mjs?v=invoice-lunas';
+} from './views.mjs?v=github-sync';
 import { mountChart } from './chart.mjs';
-import { CLOUD_URL, SyncError, createSyncedLedger } from './sync.mjs?v=invoice-lunas';
+import { SyncError, createSyncedLedger } from './sync.mjs?v=github-sync';
+import {
+  CONNECTION_KEY,
+  LEDGER_REPO,
+  TOKEN_URL,
+  GitHubSyncError,
+  createGitHubLedger,
+  openConnection,
+  sealConnection,
+} from './github-sync.mjs?v=github-sync';
 
 const $ = (selector) => document.querySelector(selector);
 const views = ['dashboard', 'invoice', 'claim', 'history', 'finance', 'settings'];
 const locationView = () => (views.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dashboard');
 const viewContainer = $('#view');
 const modal = $('#modal');
-const cloud = document.documentElement.dataset.storage === 'cloud' ? createSyncedLedger() : null;
-const sync = { url: CLOUD_URL, mode: cloud ? 'cloud' : 'local', phase: cloud ? 'loading' : 'local' };
+let cloud = document.documentElement.dataset.storage === 'cloud' ? createSyncedLedger() : null;
+const sync = { mode: cloud ? 'cloud' : 'local', phase: cloud ? 'loading' : 'local' };
 const initialDate = today();
 const ui = {
   view: locationView(),
@@ -69,11 +78,20 @@ const ui = {
 
 let storageProblem = '';
 let state = createState();
+let rememberedGitHub = null;
 try {
   const saved = !cloud && localStorage.getItem(STORAGE_KEY);
   if (saved) state = readBackup(JSON.parse(saved));
 } catch {
   storageProblem = 'Penyimpanan browser tidak dapat dibaca. Periksa izin penyimpanan atau impor cadangan.';
+}
+if (!cloud) {
+  try {
+    rememberedGitHub = JSON.parse(localStorage.getItem(CONNECTION_KEY));
+    if (rememberedGitHub) sync.mode = 'locked';
+  } catch {
+    storageProblem = 'Sambungan GitHub tersimpan tidak dapat dibaca. Hubungkan ulang dari halaman ini.';
+  }
 }
 
 const drafts = {};
@@ -88,6 +106,7 @@ let editorSaving = false;
 let expenseSaving = false;
 let settingsSaving = false;
 let cloudRead;
+let githubConnecting = false;
 
 function blankDraft(type, data = state) {
   const pack = data.settings.packages.short;
@@ -174,7 +193,7 @@ async function persist(transform, recover = false) {
       return value;
     } catch (error) {
       if (cloud.current) state = cloud.current.state;
-      setSyncPhase(error instanceof SyncError ? 'error' : 'ready');
+      setSyncPhase(error instanceof SyncError || error instanceof GitHubSyncError ? 'error' : 'ready');
       throw error;
     }
   }
@@ -229,10 +248,12 @@ function openSettingsDraft() {
 async function refreshCloud(showToast = false) {
   if (!cloud) return;
   if (cloudRead) return cloudRead;
+  const ledger = cloud;
   if (showToast || !cloud.current) setSyncPhase('loading');
   cloudRead = (async () => {
     try {
-      const snapshot = await cloud.refresh();
+      const snapshot = await ledger.refresh();
+      if (cloud !== ledger) return;
       const changed = state !== snapshot.state;
       state = snapshot.state;
       if (sync.phase !== 'saving') setSyncPhase('ready');
@@ -242,6 +263,7 @@ async function refreshCloud(showToast = false) {
         render();
       if (showToast) toast('Pembukuan tersinkron.');
     } catch (error) {
+      if (cloud !== ledger) return;
       setSyncPhase('error');
       if (!cloud.current) render();
       if (showToast) toast(error.message, true);
@@ -256,6 +278,15 @@ function render() {
   closeChart?.();
   closeChart = null;
   renderChrome();
+  if (sync.mode === 'locked') {
+    viewContainer.innerHTML = `<div class="card empty">
+      <span class="empty-icon">${icon('lock')}</span>
+      <h1>Buka pembukuan GitHub</h1>
+      <p>Masukkan kata sandi sinkronisasi untuk melanjutkan di perangkat ini.</p>
+      ${btn('Buka sinkronisasi', 'lock', 'github-connect', 'primary')}
+      ${btn('Buka data lokal', '', 'github-local', 'plain')}</div>`;
+    return;
+  }
   if (cloud && !cloud.current) {
     viewContainer.innerHTML =
       '<div id="cloud-empty" class="card empty" role="status">' +
@@ -330,6 +361,107 @@ function dialog(title, body, actions) {
     ${btn('', 'close', 'close-modal', 'plain btn-icon', 'aria-label="Tutup"')}</div>
     <div class="modal-body">${body}</div><div class="actions modal-actions">${actions}</div>`;
   modal.showModal();
+}
+
+function githubDialog(replace = false) {
+  const unlock = rememberedGitHub && !replace;
+  const setup = unlock
+    ? ''
+    : `<p>Buat token Fine-grained di GitHub. Pilih hanya repo
+    <strong>${LEDGER_REPO}</strong> dan izin <strong>Contents: Read and write</strong>.</p>
+    <a class="btn btn-outline btn-sm" href="${TOKEN_URL}" target="_blank" rel="noopener noreferrer">${icon('link')}Buat token GitHub</a>`;
+  const form = `<form id="github-form" data-mode="${unlock ? 'unlock' : 'connect'}" class="stack" autocomplete="off">
+    ${setup}
+    ${
+      unlock
+        ? ''
+        : `<label class="field"><span>Token GitHub</span>
+      <input name="token" type="password" required maxlength="300" autocomplete="off" spellcheck="false"></label>`
+    }
+    <label class="field"><span>Kata sandi sinkronisasi</span>
+      <input name="syncPassword" type="password" required minlength="12" maxlength="256"
+        autocomplete="${unlock ? 'current-password' : 'new-password'}">
+      ${unlock ? '' : '<small>Gunakan minimal 12 karakter dan pakai kata sandi yang sama di semua perangkat.</small>'}
+    </label>
+    ${unlock ? '' : '<label class="check-label"><input type="checkbox" name="remember" checked> Ingat token terenkripsi di perangkat ini</label>'}
+    <p id="github-status" class="field-help" role="status"></p>
+  </form>`;
+  dialog(
+    unlock ? 'Buka sinkronisasi GitHub' : 'Hubungkan GitHub',
+    form,
+    (unlock ? btn('Ganti token', '', 'github-relink', 'plain') : btn('Batal', '', 'close-modal')) +
+      `<button class="btn btn-primary" form="github-form" type="submit">${icon('link')}${unlock ? 'Buka pembukuan' : 'Hubungkan'}</button>`,
+  );
+}
+
+async function connectGitHub(form) {
+  if (githubConnecting) return;
+  githubConnecting = true;
+  const result = form.querySelector('#github-status');
+  const submit = modal.querySelector('[form="github-form"]');
+  submit.disabled = true;
+  result.textContent = 'Menghubungkan ke repositori privat…';
+  try {
+    const values = new FormData(form);
+    const password = String(values.get('syncPassword') || '');
+    const unlock = form.dataset.mode === 'unlock';
+    const token = unlock
+      ? await openConnection(rememberedGitHub, password)
+      : String(values.get('token') || '').trim();
+    if (!/^github_pat_[a-zA-Z0-9_]{30,290}$/.test(token)) {
+      throw new Error('Gunakan token Fine-grained GitHub untuk repo Nota Reseller.');
+    }
+    const candidate = createGitHubLedger({ token, password });
+    const opened = await candidate.refresh();
+    let local;
+    let localWarning = '';
+    try {
+      const savedLocal = localStorage.getItem(STORAGE_KEY);
+      if (savedLocal) local = readBackup(JSON.parse(savedLocal));
+    } catch {
+      localWarning = 'Data lokal belum bisa dibaca dari penyimpanan browser.';
+    }
+    const hasLocal =
+      local &&
+      (local.updatedAt ||
+        local.settingsAt ||
+        local.invoices.length ||
+        local.claims.length ||
+        local.expenses.length ||
+        Object.keys(local.deleted).length);
+    if (!opened.revision || hasLocal) {
+      await candidate.transact((next) => {
+        if (hasLocal) Object.assign(next, mergeBackup(next, local));
+        if (!next.updatedAt) next.updatedAt = new Date().toISOString();
+      });
+    }
+    if (!unlock) {
+      try {
+        const connection = values.has('remember') ? await sealConnection(token, password) : null;
+        if (connection) localStorage.setItem(CONNECTION_KEY, JSON.stringify(connection));
+        else localStorage.removeItem(CONNECTION_KEY);
+        rememberedGitHub = connection;
+      } catch {
+        localWarning = 'Sambungan GitHub belum bisa disimpan di browser.';
+      }
+    }
+    cloud = candidate;
+    state = candidate.current.state;
+    Object.assign(sync, { mode: 'github', phase: 'ready' });
+    if (!settingsDirty) openSettingsDraft();
+    for (const type of ['invoice', 'claim']) {
+      if (drafts[type] && !drafts[type].dirty) drafts[type] = blankDraft(type);
+    }
+    form.reset();
+    modal.close();
+    render();
+    toast(['Pembukuan GitHub tersinkron.', localWarning].filter(Boolean).join(' '), Boolean(localWarning));
+  } catch (error) {
+    result.textContent = error.message;
+  } finally {
+    githubConnecting = false;
+    submit.disabled = false;
+  }
 }
 
 function confirm(title, message, label, action, danger = false) {
@@ -1041,6 +1173,7 @@ document.addEventListener('submit', async (event) => {
     if (form.id === 'editor-form') await saveEditor(editType(), currentDraft());
     if (form.id === 'expense-form') await saveExpense(form);
     if (form.id === 'settings-form') await updateSettings();
+    if (form.id === 'github-form') await connectGitHub(form);
   } catch (error) {
     toast(error.message, true);
   }
@@ -1049,6 +1182,12 @@ document.addEventListener('submit', async (event) => {
 const actions = {
   nav: (id) => go(id),
   'sync-now': () => refreshCloud(true),
+  'github-connect': () => githubDialog(),
+  'github-relink': () => githubDialog(true),
+  'github-local': () => {
+    sync.mode = 'local';
+    render();
+  },
   'mobile-menu': () =>
     dialog(
       'Lainnya',
@@ -1204,14 +1343,12 @@ document.addEventListener('click', async (event) => {
 
 render();
 if (storageProblem) toast(storageProblem, true);
-if (cloud) {
-  void refreshCloud();
-  window.addEventListener('online', () => refreshCloud());
-  window.addEventListener('focus', () => refreshCloud());
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) void refreshCloud();
-  });
-  window.setInterval(() => {
-    if (!document.hidden && navigator.onLine) void refreshCloud();
-  }, 15000);
-}
+if (cloud) void refreshCloud();
+window.addEventListener('online', () => refreshCloud());
+window.addEventListener('focus', () => refreshCloud());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void refreshCloud();
+});
+window.setInterval(() => {
+  if (!document.hidden && navigator.onLine) void refreshCloud();
+}, 15000);
