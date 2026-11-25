@@ -1,0 +1,15 @@
+name = "nota-reseller-api"
+main = "cloud/owner-worker.mjs"
+compatibility_date = "2025-02-06"
+workers_dev = true
+preview_urls = false
+
+[vars]
+PAGES_ORIGIN = "https://jejow.github.io"
+OWNER_USERNAME = "junxia"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nota-reseller"
+database_id = "1deed8b4-8448-46eb-b7b2-8c5947f54a64"
+migrations_dir = "drizzle"

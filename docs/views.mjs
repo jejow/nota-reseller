@@ -12,7 +12,7 @@ import {
   warrantyFor,
   nextNumber,
   composeMessage,
-} from './model.mjs?v=github-sync';
+} from './model.mjs?v=owner-access';
 
 export const esc = (value) =>
   String(value ?? '').replace(
@@ -61,9 +61,6 @@ const brand = () => `<button class="brand" type="button" data-action="nav" data-
 </button>`;
 
 export function syncControl(sync) {
-  if (sync.mode === 'local' || sync.mode === 'locked') {
-    return btn('Sinkron GitHub', 'link', 'github-connect', 'outline btn-sm sync-link');
-  }
   const [label, glyph] = {
     loading: ['Menghubungkan', 'clock'],
     ready: ['Tersinkron', 'checkCircle'],
@@ -83,7 +80,7 @@ export function chrome(view, state, sync) {
     sidebar: `${brand()}<nav class="sidebar-nav" aria-label="Navigasi utama">
       <p class="nav-label">Ruang kerja</p>${['dashboard', 'invoice', 'claim', 'history', 'finance'].map((id) => navButton(id)).join('')}
       <p class="nav-label">Preferensi</p>${navButton('settings')}
-    </nav><div class="side-foot">${icon('lock')}<span>${sync.mode === 'local' ? 'Data di browser ini' : 'Pembukuan privat'}</span></div>`,
+    </nav><div class="side-foot">${icon('lock')}<span>Pembukuan privat</span></div>`,
     topbar: `<div class="breadcrumbs"><span>Ruang kerja</span>${icon('chevronRight')}<strong>${NAV[view][0]}</strong></div>
       <div class="mobile-brand">${brand()}</div>
       <div class="top-actions">
@@ -97,6 +94,29 @@ export function chrome(view, state, sync) {
       <button class="nav-link ${['history', 'settings'].includes(view) ? 'active' : ''}" type="button" data-action="mobile-menu"
         aria-haspopup="dialog">${icon('more')}<span>Lainnya</span></button>`,
   };
+}
+
+export function ownerGate(checking, phase, message) {
+  const panel = checking
+    ? phase === 'error'
+      ? `<h1>Pembukuan belum bisa dibuka</h1>
+        <p>Periksa koneksi, lalu coba lagi.</p>
+        <div class="actions">${btn('Coba lagi', 'history', 'sync-now', 'primary')}${btn('Keluar', '', 'owner-logout', 'plain')}</div>`
+      : '<h1>Membuka pembukuan</h1><p role="status">Memeriksa sesi dan memuat data…</p>'
+    : `<h1>Masuk ke pembukuan</h1>
+      <form id="owner-login" class="stack" method="post">
+        <label class="field"><span>Username</span>
+          <input name="username" type="text" required maxlength="80" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+        <label class="field"><span>Kata sandi</span>
+          <input name="password" type="password" required maxlength="256" autocomplete="current-password"></label>
+        <label class="check-label"><input type="checkbox" name="remember" checked> Ingat perangkat ini</label>
+        <button class="btn btn-primary owner-submit" type="submit">${icon('lock')}Masuk</button>
+        <p id="owner-status" class="field-help" role="status">${esc(message)}</p>
+      </form>`;
+  return `<section class="card owner-panel" id="cloud-empty" aria-label="Akses pemilik">
+    <div class="owner-brand"><span class="brand-mark">${icon('receipt')}</span><span>Nota Reseller</span></div>
+    ${panel}
+  </section>`;
 }
 
 const pageHead = (title, subtitle, actions = '') => `<header class="page-head">
@@ -190,21 +210,11 @@ function packageCard(report, state, withProfit = false) {
     </div></section>`;
 }
 
-function hero(sync) {
-  const local = sync?.mode === 'local';
-  const title = local ? 'Satu pembukuan di HP dan PC' : 'Invoice siap kirim dalam hitungan detik.';
-  const subtitle = local
-    ? 'Hubungkan repositori privat GitHub untuk menyinkronkan invoice, klaim garansi, dan laporan langsung dari halaman ini.'
-    : 'Tempel data akun atau unggah file. Pilih paket garansi, cek pesan, lalu salin untuk pelanggan.';
-  const actions = local
-    ? btn('Hubungkan GitHub', 'link', 'github-connect', 'hero-primary') +
-      btn('Buat invoice lokal', 'plus', 'new-invoice', 'hero-secondary')
-    : btn('Buat invoice', 'plus', 'new-invoice', 'hero-primary') +
-      btn('Klaim garansi', 'shield', 'new-claim', 'hero-secondary');
+function hero() {
   return `<section class="hero"><div class="hero-content">
-  <h2>${title}</h2>
-  <p>${subtitle}</p>
-  <div class="actions">${actions}</div>
+  <h2>Invoice siap kirim dalam hitungan detik.</h2>
+  <p>Tempel data akun atau unggah file. Pilih paket garansi, cek pesan, lalu salin untuk pelanggan.</p>
+  <div class="actions">${btn('Buat invoice', 'plus', 'new-invoice', 'hero-primary')}${btn('Klaim garansi', 'shield', 'new-claim', 'hero-secondary')}</div>
 </div><div class="hero-art" aria-hidden="true">
   <div class="orbit"></div><div class="paper-receipt receipt-back"></div>
   <div class="paper-receipt receipt-front"><div class="paper-logo"><span>${icon('receipt')}</span>INVOICE</div>
@@ -252,14 +262,10 @@ function invoiceRows(rows, compact = false) {
       .join('')}</tbody></table></div>`;
 }
 
-export function dashboard(state, report, ui, sync) {
+export function dashboard(state, report, ui) {
   const recent = [...state.invoices].sort(sortRecords).slice(0, 5);
-  const subtitle =
-    sync?.mode === 'local'
-      ? 'Lihat transaksi yang tersimpan di browser ini.'
-      : 'Pantau penjualan dan laba usaha reseller Anda.';
-  return `${pageHead('Ringkasan usaha', subtitle, periodFields(ui))}
-    ${hero(sync)}${metrics(report)}
+  return `${pageHead('Ringkasan usaha', 'Pantau penjualan dan laba usaha reseller Anda.', periodFields(ui))}
+    ${hero()}${metrics(report)}
     ${report.totals.missing ? banner('Lengkapi modal di invoice lunas agar laba dihitung dengan biaya supplier yang benar.', 'amber') : ''}
     <div class="section-grid">${chartCard(report)}${packageCard(report, state)}</div>
     <section class="card table-card"><div class="card-head"><div><h2>Invoice terbaru</h2><p>Transaksi yang baru dicatat</p></div>
@@ -757,9 +763,8 @@ export function templateFields(draft, type) {
   <p class="field-help" id="template-validation" aria-live="polite"></p>`;
 }
 
-export function settingsView(draft, type, sync) {
+export function settingsView(draft, type) {
   const cfg = { attr: 'data-setting' };
-  const activeSync = sync.mode === 'github' || sync.mode === 'cloud';
   const save =
     '<button type="submit" class="btn btn-primary" form="settings-form">' +
     icon('save') +
@@ -768,23 +773,14 @@ export function settingsView(draft, type, sync) {
     <form class="settings-grid" id="settings-form" autocomplete="off">
       <section class="card wide">
         ${headCard(
-          'Sinkronisasi antar perangkat',
-          activeSync
-            ? 'Perubahan tersimpan otomatis dan tersedia di perangkat lain yang membuka pembukuan ini.'
-            : 'Hubungkan repo privat GitHub untuk menyinkronkan transaksi, pengaturan, dan template.',
+          'Pembukuan dan sesi masuk',
+          'Perubahan tersinkron setelah disimpan dan tersedia di perangkat lain yang sudah masuk.',
         )}
         <div class="card-body">
-          <p class="field-help">${
-            activeSync
-              ? 'Gunakan token repo dan kata sandi sinkronisasi yang sama saat membuka dari perangkat lain.'
-              : 'Data yang sudah tersimpan di browser ini digabung saat sambungan dibuka.'
-          }</p>
-          <div class="actions" style="margin-top:10px">${
-            activeSync
-              ? btn('Sinkronkan sekarang', 'history', 'sync-now') +
-                (sync.mode === 'github' ? btn('Ganti token GitHub', '', 'github-relink', 'plain') : '')
-              : btn('Hubungkan GitHub', 'link', 'github-connect')
-          }</div>
+          <div class="actions">
+            ${btn('Sinkronkan sekarang', 'history', 'sync-now')}
+            ${btn('Keluar dari perangkat ini', 'lock', 'owner-logout', 'plain')}
+          </div>
         </div>
       </section>
       ${formCard(

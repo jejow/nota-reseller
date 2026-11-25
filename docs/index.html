@@ -5,20 +5,20 @@
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
     <meta
       name="description"
-      content="Buat invoice dari data akun dan sinkronkan pembukuan lewat repositori privat GitHub."
+      content="Masuk sebagai pemilik untuk mengelola invoice, klaim garansi, dan pembukuan Nota Reseller."
     />
     <meta name="theme-color" content="#f5f7f5" />
     <meta name="referrer" content="no-referrer" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; connect-src 'self' https://api.github.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
+      content="default-src 'self'; connect-src 'self' https://nota-reseller-api.nota-reseller.workers.dev; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
     />
     <title>Nota Reseller · Invoice & Keuangan</title>
     <link rel="icon" href="./mark.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css" />
-    <script type="module" src="./app.mjs?v=github-sync"></script>
+    <link rel="stylesheet" href="./style.css?v=owner-access" />
+    <script type="module" src="./app.mjs?v=owner-access"></script>
   </head>
-  <body>
+  <body class="owner-locked">
     <a class="skip-link" href="#view">Lewati ke konten</a>
     <div class="app-shell">
       <aside class="sidebar" id="sidebar" aria-label="Bilah samping"></aside>

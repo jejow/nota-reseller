@@ -1,9 +1,10 @@
 import { createState, newId, readBackup } from './model.mjs?v=github-sync';
 
 export class SyncError extends Error {
-  constructor(message, retryable = false) {
+  constructor(message, retryable = false, status = 0) {
     super(message);
     this.retryable = retryable;
+    this.status = status;
   }
 }
 
@@ -32,8 +33,8 @@ export function createSyncedLedger(endpoint = './api/ledger', request = fetch) {
     } catch {
       throw new SyncError('Koneksi ke database terputus. Coba lagi saat terhubung.', true);
     }
-    if (response.type === 'opaqueredirect' || response.status === 401 || response.status === 403) {
-      throw new SyncError('Sesi akses berakhir. Muat ulang halaman untuk masuk kembali.');
+    if (response.type === 'opaqueredirect' || response.status === 401) {
+      throw new SyncError('Sesi berakhir. Masuk kembali untuk membuka pembukuan.', false, 401);
     }
     const value = await response.json().catch(() => null);
     if (!response.ok && response.status !== 409) {

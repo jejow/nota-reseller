@@ -2,15 +2,15 @@
 
 Panel JUU untuk membuat invoice, mencatat klaim garansi, dan memantau laba reseller. Tampilan menyesuaikan layar HP dan desktop.
 
-## Sinkronisasi antar perangkat
+## Akses pemilik dan sinkronisasi
 
-Buka [Nota Reseller di GitHub Pages](https://jejow.github.io/nota-reseller/) lalu pilih **Hubungkan GitHub**. Buat token Fine-grained di GitHub untuk repo privat `jejow/nota-reseller-data` dengan izin **Contents: Read and write**. Masukkan token dan kata sandi sinkronisasi minimal 12 karakter di aplikasi. Gunakan kata sandi yang sama di setiap perangkat. Simpan kata sandinya agar pembukuan terenkripsi dapat dibuka kembali.
+Buka [Nota Reseller di GitHub Pages](https://jejow.github.io/nota-reseller/) lalu gunakan akun pemilik. Centang **Ingat perangkat ini** untuk menyimpan sesi hingga 30 hari di browser yang digunakan. **Keluar dari perangkat ini** di Pengaturan mencabut sesi browser tersebut.
 
-Invoice, klaim, pengeluaran, harga paket, dan template disimpan sebagai pembukuan terenkripsi di repo privat. Data lokal yang sudah ada digabung berdasarkan ID dan waktu perubahan. Aplikasi menyimpan perubahan saat tombol simpan digunakan dan mengambil perubahan perangkat lain ketika tab dibuka atau secara berkala. Gunakan **Sinkronkan sekarang** untuk memperbarui tampilan segera. Jika token kedaluwarsa, pilih **Pengaturan → Ganti token GitHub** dan pakai kata sandi yang sama.
+Invoice, klaim, pengeluaran, harga paket, dan template tersimpan di database D1 privat dan dapat dibaca dengan sesi pemilik yang valid. Aplikasi menggabungkan data lokal lama berdasarkan ID dan waktu perubahan saat membuka sesi. Perubahan dari perangkat lain diambil berkala selama halaman terbuka. Gunakan **Sinkronkan sekarang** untuk memuat perubahan segera.
 
 ## Mulai memakai
 
-Pembukuan baru dimulai dari Rp0. Hubungkan GitHub untuk menggunakan satu pembukuan dari beberapa perangkat.
+Pembukuan baru dimulai dari Rp0. Masuk ke akun pemilik yang sama di setiap perangkat untuk membuka pembukuan.
 
 1. Buka **Pengaturan** untuk melengkapi identitas toko, instruksi pembayaran, panduan akses, dan biaya modal default. Harga awal **Garansi 3 Hari Rp80.000** dan **Full Garansi Rp120.000** per akun.
 2. Buka **Buat invoice**. Unggah satu order atau tempel data akun. Status awal invoice baru adalah **Lunas** dan tanggal pembayaran mengikuti tanggal invoice sampai diubah manual. Pilih **Menunggu** jika pelanggan belum membayar.
@@ -46,7 +46,7 @@ Pratinjau invoice menyertakan masa berlaku paket dan petunjuk klaim. Ubah teks s
 
 ## Cadangan dan penyimpanan
 
-GitHub Pages bisa menyimpan di browser atau menyinkronkan pembukuan ke repo privat setelah dihubungkan. Gunakan **Pengaturan → Unduh backup** untuk membuat salinan. Impor menggabungkan transaksi berdasarkan ID internal dan mengambil versi terbaru dari transaksi yang sama.
+Gunakan **Pengaturan → Unduh backup** untuk membuat salinan pembukuan. Impor menggabungkan transaksi berdasarkan ID internal dan mengambil versi terbaru dari transaksi yang sama.
 
 Kata sandi, 2FA, tautan verifikasi, dan draf pesan hanya ada selama sesi halaman. Simpan TXT atau salin pesan ketika perlu menyimpan hasil untuk dikirim. File order dan teks diproses di browser.
 
@@ -54,12 +54,10 @@ Kata sandi, 2FA, tautan verifikasi, dan draf pesan hanya ada selama sesi halaman
 
 [Buka Nota Reseller](https://jejow.github.io/nota-reseller/)
 
-Situs dipublikasikan dari folder `docs` pada branch `main`. Pilih **Hubungkan GitHub** dari halaman utama untuk menyiapkan sinkronisasi di halaman tersebut.
+Situs dipublikasikan dari folder `docs` pada branch `main`. Layanan login dan penyimpanan memakai Worker dengan binding D1.
 
-## Menjalankan sumber secara lokal
+## Pengembangan
 
-Dengan Node.js 18 atau lebih baru, klik ganda **Buka Nota Reseller.cmd** di Windows atau jalankan `node serve.mjs`. Buka [alamat lokal](http://127.0.0.1:4173/).
+Jalankan `node serve.mjs` untuk menayangkan frontend secara lokal. Jalankan `npm test` dengan Node.js 24 untuk menguji login, sesi, akses database, impor, dan pembukuan.
 
-Untuk pratinjau melalui Wi-Fi yang sama, jalankan `node serve.mjs --lan` dan buka alamat Wi-Fi/LAN yang dicetak di terminal. Gunakan jaringan yang Anda percaya.
-
-Jalankan `node --test` di direktori ini untuk menguji pengenalan format, perhitungan laba, dan cadangan.
+Konfigurasi Worker ada di `wrangler.toml`. Terapkan migrasi di `drizzle` ke database D1 yang terikat. Pasang `OWNER_PASSWORD_VERIFIER` melalui secret Worker. Nilainya adalah SHA-256 dalam Base64URL dari hasil `passwordProof(username, password)`. `OWNER_API` di `docs/owner-config.mjs` menunjuk ke rute `/api/` Worker dan origin Worker dicantumkan di CSP `docs/index.html`.

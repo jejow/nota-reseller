@@ -123,6 +123,54 @@ strong {
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
   min-height: 100vh;
 }
+
+.owner-locked .app-shell {
+  display: block;
+  background: radial-gradient(ellipse at 50% 22%, #e5f4eb 0%, var(--bg) 64%);
+}
+.owner-locked :is(.sidebar, .topbar, .bottom-nav) {
+  display: none;
+}
+.owner-locked .page {
+  display: grid;
+  place-items: center;
+  min-height: 100svh;
+  padding: 24px 16px;
+}
+.owner-panel {
+  width: min(100%, 420px);
+  padding: clamp(20px, 6vw, 32px);
+  box-shadow: 0 18px 55px #113b2220;
+}
+.owner-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-weight: 750;
+}
+.owner-panel h1 {
+  margin: 22px 0 15px;
+  color: var(--text);
+  font-size: clamp(1.38rem, 5vw, 1.65rem);
+  line-height: 1.24;
+}
+.owner-panel h1 + p {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+.owner-submit {
+  justify-content: center;
+}
+#owner-status {
+  margin: 0;
+}
+#owner-status:empty {
+  display: none;
+}
+#owner-status.login-error {
+  color: var(--red);
+}
+
 .sidebar {
   position: sticky;
   top: 0;
