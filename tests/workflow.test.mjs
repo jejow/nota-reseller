@@ -6,8 +6,10 @@ import {
   today,
   cleanInvoice,
   cleanClaim,
+  cleanDocument,
   cleanExpense,
   priceDetails,
+  claimDetails,
   financialReport,
   warrantyFor,
   nextNumber,
@@ -231,6 +233,20 @@ test('the earlier standard warranty text upgrades when reading a saved ledger', 
   assert.equal(readBackup(state).settings.terms, currentTerms);
 });
 
+test('the new login guide is included with account details and customized instructions remain editable', () => {
+  const state = createState();
+  state.settings.loginGuide =
+    '1. Buka halaman login layanan dan masukkan email serta password di atas.\n2. Jika diminta kode verifikasi, ikuti petunjuk di layar dan gunakan metode pada detail akun.';
+  const recovered = readBackup(state);
+  const order = { ...invoice(), accounts: [{ email: sampleEmail, password: 'test secret' }] };
+  const message = composeMessage('invoice', order, recovered);
+  assert.match(message, /https:\/\/chatgpt\.com\/.*Continue.*TOTP.*kode 6 digit.*Tautan OTP email.*Order ID/s);
+  recovered.settings.invoiceTemplate = 'Order {{nomor}}';
+  assert.match(composeMessage('invoice', order, recovered), /DETAIL AKUN.*CARA LOGIN/s);
+  recovered.settings.loginGuide = 'Panduan khusus pemilik.';
+  assert.match(composeMessage('invoice', order, readBackup(recovered)), /Panduan khusus pemilik/);
+});
+
 test('claim copy responds to its status and mentions a replacement only when provided', () => {
   const state = createState();
   const claim = cleanClaim({
@@ -248,6 +264,40 @@ test('claim copy responds to its status and mentions a replacement only when pro
   const accounts = parseOrder(sampleEmail + '|Sandi|KUNCI').accounts;
   assert.match(message('resolved', accounts), /AKUN PENGGANTI.*Silakan coba masuk dengan akun pengganti/s);
   assert.match(message('rejected'), /belum dapat kami setujui.*Alasan keputusan: Hasil peninjauan/s);
+});
+
+test('a warranty invoice shows normal value and zero due while replacement cost lowers internal profit', () => {
+  const state = createState();
+  const sale = invoice({ price: 80000, qty: 1, discount: 0, fee: 0 });
+  const replacement = cleanClaim({
+    id: 'new-claim-a',
+    number: 'JUU-GR-261125-055',
+    invoiceId: sale.id,
+    date: day,
+    status: 'resolved',
+    replacementQty: 2,
+    replacementUnitCost: 53000,
+    extraCost: 3000,
+    reimbursement: 10000,
+  });
+  const older = cleanClaim({ id: 'new-claim-b', date: day, cost: 15000, reimbursement: 8000 });
+  const equal = cleanClaim({ id: 'new-claim-c', date: day, cost: 10000, reimbursement: 10000 });
+  state.invoices.push(sale);
+  state.claims.push(replacement, older, equal);
+  assert.equal(claimDetails(replacement).net, -99000);
+  assert.equal(cleanClaim(replacement).cost, 109000);
+  assert.equal(cleanClaim(older).cost, 15000);
+  const report = financialReport(state, {});
+  assert.deepEqual(report.warranty, { cost: 134000, credit: 28000, losses: 2, averageLoss: 53000, missing: 0 });
+  assert.equal(report.totals.revenue, 80000);
+  assert.equal(report.totals.net, -76000);
+  const message = composeMessage('claim', replacement, state);
+  assert.match(
+    message,
+    /Jumlah akun pengganti: 2 akun\nHarga normal per akun: Rp80\.000\nNilai akun pengganti: Rp160\.000\nTagihan pelanggan untuk penggantian garansi: Rp0/,
+  );
+  assert.doesNotMatch(message, /[−-]Rp|Rp53\.000|Rp99\.000|Rp109\.000|Rp10\.000/);
+  assert.match(composeMessage('invoice', sale, state), /Harga per akun: Rp80\.000/);
 });
 
 test('reading a backup retains custom message templates and recorded turnover', () => {
@@ -279,4 +329,20 @@ test('backup excludes raw data and older copies cannot restore deleted rows', ()
   current.deleted['inv-a'] = '2026-11-25T11:00:00.000Z';
   assert.equal(mergeBackup(current, read).invoices.length, 0);
   assert.equal(csvString([['=1+1', -50]]), '\uFEFF"\'=1+1",-50');
+});
+
+test('a standard backup import keeps the encrypted-record details already present in the owner ledger', () => {
+  const current = createState();
+  const document = cleanDocument({
+    accounts: [{ email: sampleEmail, password: ' preservation test ', key: 'FIXTURE' }],
+    includeAccounts: false,
+  });
+  current.invoices.push({ ...invoice({ updatedAt: '2026-11-25T10:00:00.000Z' }), document });
+  const file = readBackup(current);
+  assert.equal(file.invoices[0].document, undefined);
+  file.invoices[0].updatedAt = '2026-11-25T11:00:00.000Z';
+  file.invoices[0].customer = 'Updated financial data';
+  const reopened = readBackup(mergeBackup(current, file), { documents: true });
+  assert.equal(reopened.invoices[0].customer, 'Updated financial data');
+  assert.deepEqual(reopened.invoices[0].document, document);
 });

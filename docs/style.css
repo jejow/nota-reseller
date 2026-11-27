@@ -1519,6 +1519,12 @@ input[type='radio'] {
   line-height: 1.4;
   color: var(--muted);
 }
+.calc-heading {
+  padding: 0 14px 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
 .calc {
   display: grid;
   grid-template-columns: 1fr 1fr;

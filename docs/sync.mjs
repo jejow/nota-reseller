@@ -1,4 +1,4 @@
-import { createState, newId, readBackup } from './model.mjs?v=github-sync';
+import { createState, newId, readBackup } from './model.mjs?v=saved-documents';
 
 export class SyncError extends Error {
   constructor(message, retryable = false, status = 0) {
@@ -8,7 +8,7 @@ export class SyncError extends Error {
   }
 }
 
-export function createSyncedLedger(endpoint = './api/ledger', request = fetch) {
+export function createSyncedLedger(endpoint = './api/ledger', request = fetch, { documents = false } = {}) {
   let current = null;
   let pending = Promise.resolve();
 
@@ -27,7 +27,10 @@ export function createSyncedLedger(endpoint = './api/ledger', request = fetch) {
         cache: 'no-store',
         credentials: 'same-origin',
         redirect: 'manual',
-        headers: body ? { 'Content-Type': 'application/json', 'X-Nota-Client': '1' } : undefined,
+        headers:
+          body || documents
+            ? { ...(body && { 'Content-Type': 'application/json' }), 'X-Nota-Client': documents ? '2' : '1' }
+            : undefined,
         body,
       });
     } catch {
@@ -49,7 +52,7 @@ export function createSyncedLedger(endpoint = './api/ledger', request = fetch) {
     if (current && result.revision <= current.revision) return current;
     return (current = {
       revision: result.revision,
-      state: result.state ? readBackup(result.state) : createState(),
+      state: result.state ? readBackup(result.state, { documents }) : createState(),
     });
   }
 

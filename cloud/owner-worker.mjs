@@ -1,4 +1,5 @@
 import { handleLedgerStore, readBody } from './ledger.mjs';
+import { createLedgerCipher } from './ledger-crypto.mjs';
 
 const encoder = new TextEncoder();
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/;
@@ -81,6 +82,7 @@ async function route(request, env, path) {
   if (!env.DB || !tokenPattern.test(env.OWNER_PASSWORD_VERIFIER) || !env.OWNER_USERNAME)
     return reply('Akses pemilik sedang disiapkan.', 503);
   if (path === '/api/health' && request.method === 'GET') {
+    if (!createLedgerCipher(env.OWNER_LEDGER_KEY)) return reply('Penyimpanan privat sedang disiapkan.', 503);
     await env.DB.prepare('SELECT expires_at FROM owner_sessions LIMIT 1').first();
     return Response.json({ ready: true });
   }
@@ -96,7 +98,14 @@ async function route(request, env, path) {
     .bind(tokenHash)
     .first();
   if (!session || session.expires_at <= now) return reply('Sesi berakhir. Masuk kembali.', 401);
-  if (path === '/api/ledger') return handleLedgerStore(request, env.DB, accountId);
+  if (path === '/api/ledger') {
+    const documents = request.headers.get('X-Nota-Client') === '2';
+    if (request.method === 'PUT' && !documents)
+      return reply('Muat ulang halaman untuk menyimpan dengan versi Nota Reseller terbaru.', 426);
+    const cipher = createLedgerCipher(env.OWNER_LEDGER_KEY);
+    if (!cipher) return reply('Penyimpanan privat sedang disiapkan.', 503);
+    return handleLedgerStore(request, env.DB, accountId, cipher, documents);
+  }
   await env.DB.prepare('DELETE FROM owner_sessions WHERE token_hash = ?').bind(tokenHash).run();
   return new Response(null, { status: 204 });
 }

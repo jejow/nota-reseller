@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import worker from '../cloud/owner-worker.mjs';
 import { passwordProof } from '../docs/owner-access.mjs';
-import { createState } from '../docs/model.mjs';
+import { cleanInvoice, createState } from '../docs/model.mjs';
 import { createSyncedLedger } from '../docs/sync.mjs';
 
 const origin = 'https://jejow.github.io';
@@ -22,7 +22,11 @@ function database(t) {
   t.after(() => sqlite.close());
   function statement(sql, values = []) {
     return {
-      bind: (...next) => statement(sql, next),
+      bind: (...next) =>
+        statement(
+          sql,
+          next.map((value) => (value instanceof ArrayBuffer ? new Uint8Array(value) : value)),
+        ),
       first: async () => sqlite.prepare(sql).get(...values) ?? null,
       execute: () => sqlite.prepare(sql).run(...values),
       run: async () => sqlite.prepare(sql).run(...values),
@@ -49,6 +53,7 @@ function fixture(t) {
     PAGES_ORIGIN: origin,
     OWNER_USERNAME: username,
     OWNER_PASSWORD_VERIFIER: verifier,
+    OWNER_LEDGER_KEY: randomBytes(32).toString('base64url'),
     DB: database(t),
   };
   const request = (path, options = {}) => {
@@ -103,8 +108,8 @@ test('owner sessions share a ledger, and logout revokes only that session', asyn
   assert.ok(second.expiresAt - now < 13 * 60 * 60 * 1000);
   assert.notEqual(first.token, second.token);
 
-  const a = createSyncedLedger(api + 'ledger', asSession(first.token));
-  const b = createSyncedLedger(api + 'ledger', asSession(second.token));
+  const a = createSyncedLedger(api + 'ledger', asSession(first.token), { documents: true });
+  const b = createSyncedLedger(api + 'ledger', asSession(second.token), { documents: true });
   await a.transact((state) => {
     state.settings.business = 'Fixture store';
     state.accounts = [{ password: 'session-only-password' }];
@@ -117,6 +122,70 @@ test('owner sessions share a ledger, and logout revokes only that session', asyn
   assert.equal((await b.refresh()).revision, 1);
   env.OWNER_PASSWORD_VERIFIER = 'Z'.repeat(43);
   await assert.rejects(b.refresh(), (error) => error.status === 401);
+});
+
+test('saved account details migrate from a previous ledger and are encrypted before reaching D1', async (t) => {
+  const { login, asSession, env } = fixture(t);
+  const account = {
+    email: 'persist-fixture@example.test',
+    password: 'Fake-password-for-persistence',
+    key: 'JBSWY3DPEHPK3PXP',
+    verification: 'https://otp.example.test/verification',
+  };
+  const initial = createState();
+  initial.invoices.push(
+    cleanInvoice({
+      id: 'existing-invoice',
+      number: 'JUU-DEMO',
+      date: '2026-11-25',
+      qty: 1,
+      price: 80000,
+      status: 'paid',
+    }),
+  );
+  await env.DB.prepare('INSERT INTO ledgers (owner_id, revision, payload, commits) VALUES (?, 1, ?, ?)')
+    .bind('nota-reseller-owner', JSON.stringify(initial), '[]')
+    .run();
+  const token = (await (await login()).json()).token;
+  const request = asSession(token);
+  const ledger = createSyncedLedger(api + 'ledger', request, { documents: true });
+  assert.equal((await ledger.refresh()).state.invoices[0].number, 'JUU-DEMO');
+  await ledger.transact((next) => {
+    next.invoices[0].document = {
+      accounts: [account],
+      includeAccounts: false,
+      editMessage: true,
+      customMessage: 'Saved customer message',
+      messageNote: 'Saved note',
+    };
+    next.invoices[0].raw = 'Raw text stays out of the database';
+  });
+  const row = await env.DB.prepare('SELECT revision, typeof(payload) AS kind, payload FROM ledgers').first();
+  assert.equal(row.revision, 2);
+  assert.equal(row.kind, 'blob');
+  for (const field of Object.values(account)) {
+    assert.ok(!Buffer.from(row.payload).includes(field));
+  }
+
+  const refreshed = createSyncedLedger(api + 'ledger', request, { documents: true });
+  const invoice = (await refreshed.refresh()).state.invoices[0];
+  assert.deepEqual(invoice.document.accounts, [account]);
+  assert.equal(invoice.document.includeAccounts, false);
+  assert.equal(invoice.document.customMessage, 'Saved customer message');
+  assert.equal(invoice.raw, undefined);
+  const legacy = await (await request('ledger')).json();
+  assert.equal(legacy.state.invoices[0].document, undefined);
+  assert.equal((await request('ledger', { method: 'PUT' })).status, 426);
+
+  env.OWNER_LEDGER_KEY = randomBytes(32).toString('base64url');
+  await assert.rejects(refreshed.refresh(), /Database sedang tidak bisa diakses/);
+  await assert.rejects(
+    refreshed.transact((next) => {
+      next.settings.business = 'Try a write with a different key';
+    }),
+    /Database sedang tidak bisa diakses/,
+  );
+  assert.equal((await env.DB.prepare('SELECT revision FROM ledgers').first()).revision, 2);
 });
 
 test('repeated invalid owner logins are limited without locking out a different device', async (t) => {

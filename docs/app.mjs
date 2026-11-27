@@ -10,8 +10,10 @@ import {
   financialReport,
   trendPoints,
   priceDetails,
+  claimDetails,
   nextNumber,
   composeMessage,
+  cleanDocument,
   cleanInvoice,
   cleanClaim,
   cleanExpense,
@@ -20,7 +22,8 @@ import {
   mergeBackup,
   csvString,
   VARIABLES,
-} from './model.mjs?v=owner-access';
+  MAX_MESSAGE_LENGTH,
+} from './model.mjs?v=saved-documents';
 import { parseOrder, readImportFile, SAMPLE_TEXT } from './import.mjs?v=owner-access';
 import { icon } from './icons.mjs';
 import {
@@ -30,6 +33,7 @@ import {
   dashboard,
   editor,
   invoiceCalc,
+  claimCalc,
   importFeedback,
   accountRows,
   historyView,
@@ -41,9 +45,9 @@ import {
   syncControl,
   templateFields,
   ownerGate,
-} from './views.mjs?v=owner-access';
+} from './views.mjs?v=saved-documents';
 import { mountChart } from './chart.mjs';
-import { SyncError, createSyncedLedger } from './sync.mjs?v=owner-access';
+import { SyncError, createSyncedLedger } from './sync.mjs?v=saved-documents';
 import { OWNER_API } from './owner-config.mjs?v=owner-access';
 import {
   OWNER_SESSION_KEY,
@@ -83,7 +87,6 @@ let ownerSession = null;
 let loginMessage = '';
 
 const drafts = {};
-const sessionDocuments = new Map();
 let settingsDraft = null;
 let settingsVersion = '';
 let settingsDirty = false;
@@ -129,7 +132,10 @@ function blankDraft(type, data = state) {
       issue: '',
       resolution: '',
       status: 'filed',
-      cost: 0,
+      replacementQty: 0,
+      replacementPrice: null,
+      replacementUnitCost: null,
+      extraCost: 0,
       costDate: '',
       reimbursement: 0,
       reimbursementDate: '',
@@ -345,8 +351,10 @@ function dialog(title, body, actions) {
 function activateOwner(session) {
   ownerSession = session;
   loginMessage = '';
-  cloud = createSyncedLedger(new URL('ledger', ownerApi), (url, options) =>
-    ownerRequest(url, options, session.token),
+  cloud = createSyncedLedger(
+    new URL('ledger', ownerApi),
+    (url, options) => ownerRequest(url, options, session.token),
+    { documents: true },
   );
   return refreshCloud();
 }
@@ -358,7 +366,6 @@ function lockOwner(message = '') {
   cloudRead = null;
   sync.phase = 'idle';
   state = createState();
-  sessionDocuments.clear();
   for (const type of ['invoice', 'claim']) {
     clearTimeout(drafts[type]?.rawTimer);
     delete drafts[type];
@@ -468,8 +475,13 @@ function openRecord(type, id) {
   if (!item) return toast('Transaksi tidak ditemukan.', true);
   const open = () => {
     if (drafts[type]?.id !== id || !drafts[type]?.dirty) {
-      drafts[type] = { ...blankDraft(type), ...item, ...sessionDocuments.get(id) };
-      if (type === 'invoice') drafts[type].dateMode = 'manual';
+      const { document, ...details } = item;
+      const draft = (drafts[type] = { ...blankDraft(type), ...details, ...structuredClone(document) });
+      draft.accountsOpen = draft.accounts.length > 0;
+      if (type === 'invoice') draft.dateMode = 'manual';
+      else if (draft.replacementQty && draft.replacementQty !== draft.accounts.length) {
+        draft.touched.add('replacementQty');
+      }
     }
     go(type);
   };
@@ -539,8 +551,15 @@ function updateEditor(draft, refreshImport = false) {
   if (type === 'invoice') syncInvoiceDate(draft);
   const preview = $('#message-preview');
   if (preview) preview.textContent = output(type, draft);
-  if (type === 'invoice') {
-    $('#invoice-calc').innerHTML = invoiceCalc(draft);
+  if (type === 'claim') {
+    const cost = claimDetails(draft);
+    const fallbackPrice =
+      state.invoices.find((item) => item.id === draft.invoiceId)?.price ??
+      state.settings.packages[draft.packageId].price;
+    $('[data-draft="replacementPrice"]').placeholder = fallbackPrice.toLocaleString('id-ID');
+    $('#document-calc').innerHTML = claimCalc(cost);
+  } else {
+    $('#document-calc').innerHTML = invoiceCalc(draft, state);
     $('#payment-fields').hidden = draft.status !== 'paid';
     $('#refund-date-field').hidden = !draft.refund;
     const priceTag = $('input[data-draft="packageId"]:checked')?.closest('.pack-option')?.querySelector('span');
@@ -556,7 +575,28 @@ function updateEditor(draft, refreshImport = false) {
     $('#account-list').innerHTML = accountRows(draft);
     $('#accounts-summary').textContent = `Detail akun manual (${draft.accounts.length})`;
     $('#clear-raw').hidden = !draft.raw && !draft.accounts.length;
+    $('#account-storage-note').textContent =
+      draft.id && !draft.accounts.some((account) => account.email)
+        ? 'Belum ada detail akun tersimpan. Tempel atau unggah ulang data akun, lalu simpan.'
+        : 'Detail akun disimpan terenkripsi saat transaksi disimpan.';
   }
+}
+
+function importUnitCost(amount, quantity) {
+  const idr = amount?.idr;
+  return Number.isSafeInteger(idr) && quantity > 0 && idr % quantity === 0 && idr / quantity <= 1000000000
+    ? idr / quantity
+    : null;
+}
+
+function countReplacementAccounts(draft, reportedQty = 0) {
+  if (draft.touched.has('replacementQty')) return;
+  draft.replacementQty =
+    reportedQty ||
+    draft.accounts.filter((account) => account.email.trim()).length ||
+    Number(draft.replacementUnitCost !== null);
+  const field = $('[data-draft="replacementQty"]');
+  if (currentDraft() === draft && field) field.value = draft.replacementQty || '';
 }
 
 function processRaw(type, draft) {
@@ -564,10 +604,14 @@ function processRaw(type, draft) {
   if (!draft.rawDirty) return;
   draft.rawDirty = false;
   const result = parseOrder(draft.raw, draft.source);
+  const keepAccounts = draft.id && draft.accounts.length && !result.accounts.length;
   Object.assign(draft, {
-    accounts: result.accounts,
+    accounts: keepAccounts ? draft.accounts : result.accounts,
     parsedCount: result.accounts.length,
-    importWarnings: result.warnings,
+    importWarnings:
+      keepAccounts && draft.raw.trim()
+        ? [...result.warnings, 'Detail akun yang sudah ada masih tersimpan. Periksa format data baru.']
+        : result.warnings,
     rawConflict: result.conflict,
   });
   if (type === 'invoice' && !draft.id) {
@@ -582,16 +626,17 @@ function processRaw(type, draft) {
       qty: meta.qty || result.accounts.length || 1,
       unitCost: state.settings.packages[draft.packageId].cost,
     };
-    if (
-      meta.amount?.idr !== null &&
-      meta.amount?.idr !== undefined &&
-      meta.amount.idr % candidates.qty === 0 &&
-      meta.amount.idr / candidates.qty <= 1000000000
-    ) {
-      candidates.unitCost = meta.amount.idr / candidates.qty;
-    }
+    candidates.unitCost = importUnitCost(meta.amount, candidates.qty) ?? candidates.unitCost;
     for (const [name, value] of Object.entries(candidates)) {
       if (!draft.touched.has(name)) draft[name] = value;
+    }
+  }
+  if (type === 'claim' && !keepAccounts) {
+    const { meta } = result;
+    countReplacementAccounts(draft, Math.max(meta.qty ?? 0, result.accounts.length));
+    if (!draft.id && !draft.touched.has('replacementUnitCost')) {
+      draft.supplierAmount = meta.amount?.original || '';
+      draft.replacementUnitCost = importUnitCost(meta.amount, draft.replacementQty);
     }
   }
   if (currentDraft() === draft) {
@@ -640,8 +685,20 @@ function checkEditor(type, draft) {
   if (draft.importBusy) throw new Error('Tunggu sampai file selesai dibaca.');
   if (draft.rawConflict) throw new Error('Masukkan satu order untuk setiap invoice atau klaim.');
   if (!validDate(draft.date)) throw new Error('Isi tanggal transaksi.');
+  if (
+    draft.accounts.some(
+      (account) => !account.email.trim() && (account.password || account.key || account.verification),
+    )
+  ) {
+    throw new Error('Isi email untuk setiap detail akun yang memiliki password, 2FA key, atau tautan OTP.');
+  }
+  if (draft.editMessage && draft.customMessage.length > MAX_MESSAGE_LENGTH)
+    throw new Error('Pesan terlalu panjang. Pendekkan pesan sebelum menyimpannya.');
   if (type === 'claim') {
     if (!draft.invoiceNumber.trim()) throw new Error('Isi nomor invoice asal.');
+    const listed = draft.accounts.filter((account) => account.email.trim()).length;
+    if ((draft.replacementUnitCost && !draft.replacementQty) || (listed && draft.replacementQty < listed))
+      throw new Error('Isi jumlah akun pengganti sesuai detail akun dan modal.');
     return;
   }
   if (!draft.product.trim()) throw new Error('Isi nama produk.');
@@ -701,39 +758,27 @@ async function saveEditor(type, draft, allowDuplicate = false) {
       if (serial) next[type === 'claim' ? 'nextClaim' : 'nextInvoice'] = serial.next;
       const data = {
         ...draft,
+        document: cleanDocument(draft),
         id,
         number: draft.number || serial.number,
         createdAt: existing?.createdAt || stamp,
         updatedAt: stamp,
       };
-      if (type === 'claim' && data.invoiceId) {
-        const linked = next.invoices.find((invoice) => invoice.id === data.invoiceId);
-        if (!linked)
+      if (type === 'claim') {
+        const linked = data.invoiceId ? next.invoices.find((invoice) => invoice.id === data.invoiceId) : null;
+        if (data.invoiceId && !linked)
           throw new Error('Invoice asal tidak ditemukan. Pilih invoice lain atau isi nomornya secara manual.');
-        data.invoiceNumber = linked.number;
+        if (linked) data.invoiceNumber = linked.number;
+        if (data.replacementQty && data.replacementPrice === null)
+          data.replacementPrice = linked?.price ?? next.settings.packages[data.packageId].price;
       }
-      const clean = type === 'claim' ? cleanClaim(data) : cleanInvoice(data);
+      const clean = (type === 'claim' ? cleanClaim : cleanInvoice)(data, { documents: true });
       next[key] = [...next[key].filter((record) => record.id !== data.id), clean];
       return clean;
     });
-    Object.assign(draft, record, { dirty: false });
+    const { document, ...details } = record;
+    Object.assign(draft, details, structuredClone(document), { dirty: false });
     if (type === 'invoice') draft.dateMode = 'manual';
-    sessionDocuments.set(
-      record.id,
-      Object.fromEntries(
-        [
-          'raw',
-          'source',
-          'accounts',
-          'accountsOpen',
-          'parsedCount',
-          'includeAccounts',
-          'editMessage',
-          'customMessage',
-          'messageNote',
-        ].map((key) => [key, draft[key]]),
-      ),
-    );
     render();
     toast(`${type === 'claim' ? 'Klaim' : 'Invoice'} ${record.number} tersimpan.`);
   } finally {
@@ -754,7 +799,6 @@ async function removeRecord(type, draft) {
     next[key] = next[key].filter((item) => item.id !== draft.id);
     next.deleted[draft.id] = new Date().toISOString();
   });
-  sessionDocuments.delete(draft.id);
   delete drafts[type];
   if (type === 'expense') go('finance');
   else {
@@ -1002,7 +1046,7 @@ function readDraftField(el) {
       ? el.checked
       : el.type === 'number'
         ? el.value === ''
-          ? fieldName === 'unitCost'
+          ? ['unitCost', 'replacementUnitCost', 'replacementPrice'].includes(fieldName)
             ? null
             : ''
           : el.valueAsNumber
@@ -1020,6 +1064,7 @@ function readDraftField(el) {
     render();
   } else {
     draft[fieldName] = value;
+    if (fieldName === 'replacementUnitCost') countReplacementAccounts(draft, draft.replacementQty);
     if (fieldName === 'dateMode' && !validDate(draft.date)) draft.date = today();
     if (fieldName === 'status' && type === 'invoice') {
       if (value === 'paid') draft.paymentDate ||= draft.id ? today() : draft.date;
@@ -1067,6 +1112,7 @@ document.addEventListener('input', (event) => {
     const row = draft.accounts[Number(el.dataset.index)];
     if (row) row[el.dataset.account] = el.value;
     draft.dirty = true;
+    if (editType() === 'claim' && el.dataset.account === 'email') countReplacementAccounts(draft);
     updateEditor(draft);
   } else if (draft && el.dataset.draft && !['SELECT', 'FIELDSET'].includes(el.tagName) && el.type !== 'radio') {
     readDraftField(el);
@@ -1173,7 +1219,23 @@ const actions = {
       setRaw(editType(), currentDraft(), SAMPLE_TEXT),
     );
   },
-  'clear-raw': () => setRaw(editType(), currentDraft(), ''),
+  'clear-raw': () => {
+    const type = editType();
+    const draft = currentDraft();
+    const clear = () => {
+      draft.accounts = [];
+      setRaw(type, draft, '');
+    };
+    if (draft.id && draft.accounts.length)
+      confirm(
+        'Kosongkan semua detail akun?',
+        'Perubahan berlaku setelah transaksi disimpan kembali.',
+        'Kosongkan',
+        clear,
+        true,
+      );
+    else clear();
+  },
   'supplier-date': () => {
     const draft = currentDraft();
     if (!draft.supplierDate) return;
@@ -1198,6 +1260,7 @@ const actions = {
     const draft = currentDraft();
     draft.accounts.splice(Number(id), 1);
     draft.dirty = true;
+    if (editType() === 'claim') countReplacementAccounts(draft);
     updateEditor(draft, true);
   },
   'edit-message': () => {
@@ -1206,6 +1269,7 @@ const actions = {
     if (editType() === 'invoice') syncInvoiceDate(draft);
     if (!draft.editMessage) draft.customMessage = output(editType(), draft);
     draft.editMessage = !draft.editMessage;
+    draft.dirty = true;
     render();
     $('#message-editor')?.focus();
   },
@@ -1271,10 +1335,17 @@ const actions = {
     updateTemplatePreview();
     toast('Template bawaan dipasang. Simpan untuk menerapkannya.');
   },
+  'reset-login-guide': () => {
+    const field = $('[data-setting="loginGuide"]');
+    field.value = settingsDraft.loginGuide = createState().settings.loginGuide;
+    settingsDirty = true;
+    updateTemplatePreview();
+    toast('Panduan login bawaan dipasang. Simpan untuk menerapkannya.');
+  },
   'export-backup': () => {
     download(
       'nota-reseller-backup-' + today() + '.json',
-      JSON.stringify(state, null, 2),
+      JSON.stringify(readBackup(state), null, 2),
       'application/json;charset=utf-8',
     );
     toast('Cadangan diunduh.');

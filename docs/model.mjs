@@ -38,6 +38,14 @@ export function addDays(date, days) {
 }
 
 const WARRANTY_HEADING = '*🛡️ SYARAT & KETENTUAN GARANSI*';
+export const MAX_MESSAGE_LENGTH = 250000;
+const LOGIN_GUIDE = [
+  '1. Untuk ChatGPT, buka https://chatgpt.com/ dan pilih Log in (Masuk).',
+  '2. Masukkan email di detail akun, pilih Continue (Lanjutkan), lalu masukkan password dan lanjutkan.',
+  '3. Jika diminta kode autentikator dan ada 2FA Key, tambahkan kunci itu sebagai akun berbasis waktu (TOTP) di aplikasi autentikator. Masukkan kode 6 digit yang sedang tampil ke halaman login.',
+  '4. Jika diminta kode verifikasi lewat email dan ada Tautan OTP email, buka tautan itu, ambil kode terbaru, lalu masukkan kodenya di halaman login.',
+  '5. Setelah masuk, cek email dan paket aktif di menu profil. Jika akses gagal atau metode verifikasi tidak tersedia, hubungi admin dengan Order ID atau nomor klaim.',
+].join('\n');
 
 const LEGACY_TEMPLATES = {
   invoiceTemplate: `*{{judul_pembayaran}}*
@@ -83,8 +91,10 @@ Status: *{{status}}*
 {{catatan}}
 {{kontak_toko}}`,
 
-  loginGuide:
+  loginGuide: [
     'Gunakan email dan password pada detail akun untuk masuk. Jika diminta verifikasi, ikuti metode yang tercantum di detail akun.',
+    '1. Buka halaman login layanan dan masukkan email serta password di atas.\n2. Jika diminta kode verifikasi, ikuti petunjuk di layar dan gunakan metode pada detail akun.',
+  ],
   terms: [
     'Simpan nomor invoice untuk pengajuan klaim. Gunakan akun sesuai ketentuan layanan. Jika ada kendala akses, hubungi admin dengan menyertakan nomor invoice dan penjelasan kendalanya.',
     'Simpan Order ID untuk pengajuan klaim. Jika ada kendala, sertakan Order ID dan jelaskan kendalanya. Pelanggaran ketentuan penggunaan layanan dapat membatalkan garansi.',
@@ -119,7 +129,7 @@ ${WARRANTY_HEADING}
 {{penutup_invoice}}
 {{kontak_toko}}`;
 
-export const claimTemplate = `*🛡️ KLAIM GARANSI {{toko}}*
+const previousClaimTemplate = `*🛡️ KLAIM GARANSI {{toko}}*
 
 Nomor klaim: {{nomor_klaim}}
 Order ID: {{nomor_invoice}}
@@ -140,6 +150,11 @@ Status: *{{status}}*
 
 {{penutup_klaim}}
 {{kontak_toko}}`;
+export const claimTemplate = previousClaimTemplate.replace(
+  '{{bagian_akun}}',
+  '{{baris_harga_pengganti}}\n\n{{bagian_akun}}',
+);
+LEGACY_TEMPLATES.claimTemplate = [LEGACY_TEMPLATES.claimTemplate, previousClaimTemplate];
 
 const INVOICE_COPY = {
   Menunggu: {
@@ -178,8 +193,7 @@ const DEFAULT_SETTINGS = {
   product: 'ChatGPT Plus 1 Bulan',
   contact: '',
   paymentInfo: '',
-  loginGuide:
-    '1. Buka halaman login layanan dan masukkan email serta password di atas.\n2. Jika diminta kode verifikasi, ikuti petunjuk di layar dan gunakan metode pada detail akun.',
+  loginGuide: LOGIN_GUIDE,
   accountRules: 'Jaga kerahasiaan password dan kode verifikasi. Gunakan akun sesuai ketentuan layanan.',
   terms: [
     '1. Garansi mencakup kendala akses akun selama masa garansi sesuai paket pada invoice.',
@@ -261,6 +275,17 @@ export function paymentLabel(invoice) {
   return PAYMENT[invoice.status] ?? PAYMENT.pending;
 }
 
+export function claimDetails(claim, regularPrice = 0) {
+  const quantity = integer(claim.replacementQty, 0, 1000);
+  const unitCost = nullable(claim.replacementUnitCost);
+  const unitPrice = integer(claim.replacementPrice ?? regularPrice);
+  const accountCost = unitCost === null ? null : quantity * unitCost;
+  const extraCost = integer(claim.extraCost ?? claim.cost);
+  const cost = (accountCost ?? 0) + extraCost;
+  const credit = integer(claim.reimbursement);
+  return { quantity, unitPrice, unitCost, accountCost, extraCost, cost, credit, net: credit - cost };
+}
+
 export function warrantyFor(invoice, now = today()) {
   if (!invoice) return { label: 'Belum terhubung', tone: 'muted', message: '' };
   const label = invoice.packageLabel;
@@ -334,7 +359,8 @@ export function financialReport(state, range) {
       });
   }
   for (const claim of state.claims) {
-    if (claim.cost)
+    const { cost, credit } = claimDetails(claim);
+    if (cost)
       events.push({
         id: claim.id,
         reference: claim.number,
@@ -345,9 +371,9 @@ export function financialReport(state, range) {
         packageId: claim.packageId,
         revenue: 0,
         cost: 0,
-        fee: claim.cost,
+        fee: cost,
       });
-    if (claim.reimbursement)
+    if (credit)
       events.push({
         id: claim.id,
         reference: claim.number,
@@ -358,7 +384,7 @@ export function financialReport(state, range) {
         packageId: claim.packageId,
         revenue: 0,
         cost: 0,
-        fee: -claim.reimbursement,
+        fee: -credit,
       });
   }
   for (const expense of state.expenses)
@@ -392,6 +418,9 @@ export function financialReport(state, range) {
   const packages = Object.fromEntries(
     PACKAGES.map((id) => [id, { revenue: 0, quantity: 0, gross: 0, net: 0, missing: 0 }]),
   );
+  const claimBalances = new Map();
+  let claimCost = 0;
+  let claimCredit = 0;
   for (const event of scoped) {
     const packageTotal = packages[event.packageId];
     totals.revenue += event.revenue;
@@ -405,7 +434,12 @@ export function financialReport(state, range) {
     }
     if (event.kind === 'refund') totals.refund -= event.revenue;
     if (event.kind === 'expense') totals.operating += event.fee;
-    if (event.kind === 'claim' || event.kind === 'credit') totals.warranty += event.fee;
+    if (event.kind === 'claim' || event.kind === 'credit') {
+      totals.warranty += event.fee;
+      claimBalances.set(event.id, (claimBalances.get(event.id) ?? 0) + event.fee);
+      if (event.kind === 'claim') claimCost += event.fee;
+      else claimCredit -= event.fee;
+    }
     if (packageTotal) {
       packageTotal.revenue += event.revenue;
       packageTotal.gross += event.revenue - (event.cost ?? 0);
@@ -415,10 +449,23 @@ export function financialReport(state, range) {
   totals.gross = totals.revenue - totals.cost;
   totals.net = totals.gross - totals.fee - totals.operating - totals.warranty;
   const pending = state.invoices.filter((i) => i.status === 'pending' && within(i.date, range));
+  const losses = [...claimBalances.values()].filter((amount) => amount > 0);
   return {
     events: scoped,
     totals,
     packages,
+    warranty: {
+      cost: claimCost,
+      credit: claimCredit,
+      losses: losses.length,
+      averageLoss: losses.length ? losses.reduce((sum, amount) => sum + amount, 0) / losses.length : 0,
+      missing: state.claims.filter(
+        (claim) =>
+          claim.replacementQty > 0 &&
+          claim.replacementUnitCost == null &&
+          within(claim.costDate || claim.date, range),
+      ).length,
+    },
     receivable: pending.reduce((sum, i) => sum + priceDetails(i).total, 0),
     pending: pending.length,
   };
@@ -483,6 +530,7 @@ export const VARIABLES = {
     pesan_status_klaim: 'Pembuka sesuai status klaim',
     baris_keluhan: 'Keluhan',
     baris_solusi: 'Tindakan',
+    baris_harga_pengganti: 'Harga normal dan tagihan garansi',
     bagian_akun: 'Akun pengganti',
     baris_panduan: 'Panduan akses akun',
     garansi: 'Masa garansi',
@@ -516,6 +564,15 @@ export function composeMessage(type, draft, state) {
   const linked = isClaim ? state.invoices.find((i) => i.id === draft.invoiceId) : draft;
   const warranty = warrantyFor(linked);
   const accounts = accountBlock(draft.accounts ?? [], isClaim);
+  const guide = settings.loginGuide;
+  const product = draft.product || linked?.product || settings.product;
+  const instructions =
+    guide === LOGIN_GUIDE && !/\bchatgpt\b/i.test(product)
+      ? guide.replace(
+          'Untuk ChatGPT, buka https://chatgpt.com/ dan pilih Log in (Masuk).',
+          'Buka situs resmi layanan dan pilih Log in (Masuk).',
+        )
+      : guide;
   const values = {
     toko: settings.business,
     tanggal: formatDate(draft.date),
@@ -523,13 +580,17 @@ export function composeMessage(type, draft, state) {
     baris_pelanggan: draft.customer ? `Pelanggan: ${draft.customer}` : '',
     paket: draft.packageLabel || settings.packages[draft.packageId].label,
     bagian_akun: accounts,
-    baris_panduan: accounts && settings.loginGuide ? `\n*📝 CARA LOGIN*\n${settings.loginGuide}` : '',
+    baris_panduan: accounts && instructions ? `\n*📝 CARA LOGIN*\n${instructions}` : '',
     garansi: warranty.message,
     catatan: draft.messageNote || '',
     kontak_toko: settings.contact ? `Hubungi admin di ${settings.contact}.` : '',
   };
   if (isClaim) {
     const status = Object.hasOwn(CLAIM, draft.status) ? draft.status : 'filed';
+    const replacement = claimDetails(draft, linked?.price ?? settings.packages[draft.packageId]?.price);
+    const quantity =
+      replacement.quantity || (accounts ? draft.accounts.filter((account) => account.email).length : 0);
+    const showReplacementPrice = quantity > 0 && status !== 'rejected';
     let closing = 'Simpan nomor klaim untuk mengecek perkembangannya.';
     if (status === 'resolved' && accounts) {
       closing =
@@ -546,6 +607,16 @@ export function composeMessage(type, draft, state) {
       baris_solusi: draft.resolution
         ? `${status === 'rejected' ? 'Alasan keputusan' : 'Tindak lanjut'}: ${draft.resolution}`
         : '',
+      baris_harga_pengganti: showReplacementPrice
+        ? [
+            `Jumlah akun pengganti: ${quantity} akun`,
+            `Harga normal per akun: ${money(replacement.unitPrice)}`,
+            quantity > 1 ? `Nilai akun pengganti: ${money(quantity * replacement.unitPrice)}` : '',
+            'Tagihan pelanggan untuk penggantian garansi: Rp0',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : '',
       baris_garansi_asal: warranty.message ? `Garansi invoice asal: ${warranty.message}` : '',
       penutup_klaim: closing,
     });
@@ -557,7 +628,7 @@ export function composeMessage(type, draft, state) {
       nomor: draft.number || nextNumber(state, type, draft.date).number,
       produk: draft.product || settings.product,
       jumlah: draft.qty,
-      harga_satuan: money(draft.price),
+      harga_satuan: money(integer(draft.price)),
       total: money(detail.total),
       status,
       judul_pembayaran: copy.title,
@@ -577,6 +648,21 @@ export function composeMessage(type, draft, state) {
     });
   }
   let template = settings[isClaim ? 'claimTemplate' : 'invoiceTemplate'];
+  if (values.baris_harga_pengganti && !/\{\{\s*baris_harga_pengganti\s*\}\}/.test(template)) {
+    template += '\n\n{{baris_harga_pengganti}}';
+  }
+  if (accounts && !/\{\{\s*bagian_akun\s*\}\}/.test(template) && !template.includes(accounts)) {
+    template += '\n\n{{bagian_akun}}';
+  }
+  if (
+    values.baris_panduan &&
+    !/\{\{\s*baris_panduan\s*\}\}/.test(template) &&
+    !template.includes(instructions)
+  ) {
+    template = /\{\{\s*bagian_akun\s*\}\}/.test(template)
+      ? template.replace(/\{\{\s*bagian_akun\s*\}\}/, '$&\n{{baris_panduan}}')
+      : template + '\n\n{{baris_panduan}}';
+  }
   if (
     !isClaim &&
     values.ketentuan &&
@@ -616,9 +702,36 @@ const base = (record) => ({
   updatedAt: str(record.updatedAt, 50),
 });
 
-export function cleanInvoice(record) {
+export function cleanDocument(record) {
+  const accounts = (Array.isArray(record.accounts) ? record.accounts.slice(0, 1000) : [])
+    .map((account) => ({
+      email: str(account?.email, 320),
+      password: typeof account?.password === 'string' ? account.password.slice(0, 500) : '',
+      key: str(account?.key, 600),
+      verification: str(account?.verification, 3000),
+    }))
+    .filter((account) => account.email);
+  return {
+    accounts,
+    includeAccounts: record.includeAccounts !== false,
+    messageNote: str(record.messageNote, 1000),
+    editMessage: record.editMessage === true,
+    customMessage:
+      record.editMessage === true && typeof record.customMessage === 'string'
+        ? record.customMessage.slice(0, MAX_MESSAGE_LENGTH)
+        : '',
+  };
+}
+
+const savedDocument = (record, documents) =>
+  documents && record.document && typeof record.document === 'object'
+    ? { document: cleanDocument(record.document) }
+    : {};
+
+export function cleanInvoice(record, { documents = false } = {}) {
   const invoice = {
     ...base(record),
+    ...savedDocument(record, documents),
     customer: str(record.customer),
     product: str(record.product),
     contact: str(record.contact, 100),
@@ -650,9 +763,11 @@ export function cleanInvoice(record) {
   return invoice;
 }
 
-export function cleanClaim(record) {
+export function cleanClaim(record, { documents = false } = {}) {
+  const detail = claimDetails(record);
   return {
     ...base(record),
+    ...savedDocument(record, documents),
     invoiceId: str(record.invoiceId, 100),
     invoiceNumber: str(record.invoiceNumber, 80),
     customer: str(record.customer),
@@ -663,7 +778,11 @@ export function cleanClaim(record) {
     status: oneOf(record.status, Object.keys(CLAIM), 'filed'),
     issue: str(record.issue, 1000),
     resolution: str(record.resolution, 1000),
-    cost: integer(record.cost),
+    replacementQty: detail.quantity,
+    replacementPrice: nullable(record.replacementPrice),
+    replacementUnitCost: detail.unitCost,
+    extraCost: detail.extraCost,
+    cost: detail.cost,
     costDate: dateOr(record.costDate, dateOr(record.date, today())),
     reimbursement: integer(record.reimbursement),
     reimbursementDate: dateOr(record.reimbursementDate, dateOr(record.costDate, dateOr(record.date, today()))),
@@ -721,7 +840,7 @@ export function cleanSettings(values) {
   };
 }
 
-export function readBackup(data) {
+export function readBackup(data, { documents = false } = {}) {
   if (
     data?.version !== 1 ||
     !data.settings ||
@@ -746,7 +865,7 @@ export function readBackup(data) {
       ) {
         throw new Error('Ada data transaksi yang tidak lengkap di dalam cadangan.');
       }
-      const record = clean(value);
+      const record = clean(value, { documents });
       if (ids.has(record.id)) throw new Error('Cadangan berisi ID transaksi ganda.');
       ids.add(record.id);
       return record;
@@ -778,7 +897,12 @@ export function mergeBackup(current, incoming) {
     const records = new Map(next[key].map((record) => [record.id, record]));
     for (const item of incoming[key]) {
       const existing = records.get(item.id);
-      if (!existing || item.updatedAt > existing.updatedAt) records.set(item.id, item);
+      if (!existing || item.updatedAt > existing.updatedAt) {
+        records.set(
+          item.id,
+          existing?.document && !item.document ? { ...item, document: existing.document } : item,
+        );
+      }
     }
     next[key] = [...records.values()].filter(
       (record) => !Object.hasOwn(next.deleted, record.id) || record.updatedAt > next.deleted[record.id],

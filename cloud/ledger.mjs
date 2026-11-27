@@ -11,10 +11,6 @@ const reply = (value, status = 200) =>
     headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
   });
 
-function snapshot(row) {
-  return row ? { revision: row.revision, state: JSON.parse(row.payload) } : { revision: 0, state: null };
-}
-
 export async function readBody(request, maxBytes = MAX_BYTES) {
   if (Number(request.headers.get('Content-Length')) > maxBytes) return TOO_LARGE;
   const reader = request.body?.getReader();
@@ -54,7 +50,7 @@ export async function handleLedger(request, db) {
   return handleLedgerStore(request, db, owner);
 }
 
-export async function handleLedgerStore(request, db, owner) {
+export async function handleLedgerStore(request, db, owner, cipher = null, documents = false) {
   if (!db) return reply({ message: 'Database belum tersedia.' }, 503);
   if (!['GET', 'PUT'].includes(request.method)) return reply({ message: 'Metode tidak didukung.' }, 405);
   if (request.method === 'PUT' && request.headers.get('Content-Type')?.split(';')[0] !== 'application/json') {
@@ -62,8 +58,16 @@ export async function handleLedgerStore(request, db, owner) {
   }
 
   const read = () => db.prepare(selectLedger).bind(owner).first();
+  const snapshot = async (row) => {
+    if (!row) return { revision: 0, state: null };
+    const state =
+      typeof row.payload === 'string'
+        ? JSON.parse(row.payload)
+        : await cipher.open(row.payload, owner, row.revision);
+    return { revision: row.revision, state: readBackup(state, { documents }) };
+  };
   try {
-    if (request.method === 'GET') return reply(snapshot(await read()));
+    if (request.method === 'GET') return reply(await snapshot(await read()));
     let change;
     let next;
     try {
@@ -75,20 +79,23 @@ export async function handleLedgerStore(request, db, owner) {
         !/^[a-zA-Z0-9-]{16,70}$/.test(change.commitId)
       )
         throw new Error('Invalid commit');
-      next = readBackup(change.state);
+      next = readBackup(change.state, { documents });
     } catch {
       return reply({ message: 'Data pembukuan tidak valid.' }, 400);
     }
     const row = await read();
     const commits = row ? JSON.parse(row.commits) : [];
-    if (commits.includes(change.commitId)) return reply(snapshot(row));
-    if (change.revision !== (row?.revision ?? 0)) return reply(snapshot(row), 409);
+    if (commits.includes(change.commitId)) return reply(await snapshot(row));
+    if (change.revision !== (row?.revision ?? 0)) return reply(await snapshot(row), 409);
+    if (row && typeof row.payload !== 'string') await cipher.open(row.payload, owner, row.revision);
 
     next.updatedAt = new Date().toISOString();
-    const payload = JSON.stringify(next);
-    if (new TextEncoder().encode(payload).length > MAX_BYTES - 1024) {
+    const serialized = JSON.stringify(next);
+    const bytes = new TextEncoder().encode(serialized);
+    if (bytes.length > MAX_BYTES - 1024) {
       return reply({ message: 'Data pembukuan melebihi batas penyimpanan.' }, 413);
     }
+    const payload = cipher ? await cipher.seal(bytes, owner, change.revision + 1) : serialized;
     const recent = JSON.stringify([...commits.slice(1 - RECENT_COMMITS), change.commitId]);
     const saved = row
       ? await db
@@ -107,7 +114,7 @@ export async function handleLedgerStore(request, db, owner) {
     if (saved) return reply({ revision: saved.revision, state: next });
     const current = await read();
     const committed = current && JSON.parse(current.commits).includes(change.commitId);
-    return reply(snapshot(current), committed ? 200 : 409);
+    return reply(await snapshot(current), committed ? 200 : 409);
   } catch {
     return reply({ message: 'Database sedang tidak bisa diakses. Coba lagi.' }, 503);
   }

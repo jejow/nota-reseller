@@ -7,12 +7,14 @@ import {
   PACKAGES,
   EXPENSES,
   VARIABLES,
+  MAX_MESSAGE_LENGTH,
   priceDetails,
+  claimDetails,
   paymentLabel,
   warrantyFor,
   nextNumber,
   composeMessage,
-} from './model.mjs?v=owner-access';
+} from './model.mjs?v=saved-documents';
 
 export const esc = (value) =>
   String(value ?? '').replace(
@@ -46,6 +48,8 @@ const tag = (invoice) => `<span class="tag ${invoice.packageId}">${esc(invoice.p
 const banner = (message, tone = '', glyph = 'info') =>
   `<div class="banner ${tone}">${icon(glyph)}<p>${esc(message)}</p></div>`;
 const tile = (glyph, tone = '') => `<span class="tile-icon ${tone}">${icon(glyph)}</span>`;
+const savedAccountCount = (row) =>
+  row.document?.accounts.length ? `<small>${row.document.accounts.length} akun tersimpan</small>` : '';
 
 const NAV = {
   dashboard: ['Ringkasan', 'dashboard'],
@@ -252,7 +256,7 @@ function invoiceRows(rows, compact = false) {
     <tbody>${rows
       .map(
         (row) => `<tr>
-      <td><div class="row-main">${tile('receipt')}<div><span class="row-id">${esc(row.number)}</span><small>${esc(row.customer || row.product)}</small></div></div></td>
+      <td><div class="row-main">${tile('receipt')}<div><span class="row-id">${esc(row.number)}</span><small>${esc(row.customer || row.product)}</small>${savedAccountCount(row)}</div></div></td>
       <td data-label="Tanggal">${formatDate(row.date)}</td><td data-label="Paket">${tag(row)}</td>
       <td data-label="Status">${paymentBadge(row)}</td><td class="num" data-label="Total"><strong>${money(priceDetails(row).total)}</strong></td>
       <td class="row-actions"><div class="row-tools">${iconButton('Buka invoice ' + row.number, 'edit', 'edit-invoice', row.id)}
@@ -343,7 +347,11 @@ function importContents(draft, isClaim) {
     <summary id="accounts-summary">Detail akun manual (${draft.accounts.length})</summary>
     <div class="account-list" id="account-list">${accountRows(draft)}</div>
     <div class="actions" style="margin-top:7px">${btn('Tambah akun', 'plus', 'add-account', 'outline btn-sm')}</div>
-    <p class="account-hint">Data akun hanya tersedia selama halaman ini terbuka.</p>
+    <p class="account-hint" id="account-storage-note">${
+      draft.id && !draft.accounts.length
+        ? 'Belum ada detail akun tersimpan. Tempel atau unggah ulang data akun, lalu simpan.'
+        : 'Detail akun disimpan terenkripsi saat transaksi disimpan.'
+    }</p>
   </details>`;
 }
 
@@ -475,17 +483,34 @@ function claimFields(draft, state) {
       importContents(draft, true),
     ),
     formCard(
+      'Harga dan modal pengganti',
+      'Catat modal yang dibayar ke supplier dan harga normal yang tampil di pesan klaim.',
+      'wallet',
+      `<div class="fields">
+      <label class="field"><span>Jumlah akun pengganti</span>
+        <input type="number" data-draft="replacementQty" value="${esc(draft.replacementQty || '')}" placeholder="0" min="0" max="1000" step="1" inputmode="numeric">
+      </label>
+      ${amountField('Harga normal per akun', 'replacementPrice', draft.replacementPrice, {
+        help: 'Kosongkan untuk mengikuti harga invoice asal atau harga paket.',
+      })}
+      ${amountField('Modal per akun pengganti', 'replacementUnitCost', draft.replacementUnitCost, {
+        placeholder: 'Belum diisi',
+        help: 'Isi Rp0 jika penggantian dari supplier gratis.',
+      })}
+      ${amountField('Biaya penggantian lain', 'extraCost', draft.extraCost)}
+      ${field('Tanggal biaya', 'costDate', draft.costDate, { type: 'date', help: 'Kosongkan untuk memakai tanggal klaim.' })}
+      ${amountField('Kredit dari supplier', 'reimbursement', draft.reimbursement)}
+      ${field('Tanggal kredit', 'reimbursementDate', draft.reimbursementDate, { type: 'date' })}
+    </div>`,
+    ),
+    formCard(
       'Tindak lanjut',
-      'Catat status, solusi, dan biaya penggantian.',
+      'Catat status dan solusi untuk pelanggan.',
       'shield',
       `<div class="fields">
       ${picker('Status klaim', 'status', CLAIM, draft.status, { wide: true })}
       ${area('Keluhan pelanggan', 'issue', draft.issue, { placeholder: 'Contoh: akun tidak bisa login', wide: true })}
       ${area('Tindak lanjut atau alasan keputusan', 'resolution', draft.resolution, { placeholder: 'Contoh: akun pengganti sudah disiapkan', wide: true })}
-      ${amountField('Biaya penggantian', 'cost', draft.cost)}
-      ${field('Tanggal biaya', 'costDate', draft.costDate, { type: 'date' })}
-      ${amountField('Kredit dari supplier', 'reimbursement', draft.reimbursement)}
-      ${field('Tanggal kredit', 'reimbursementDate', draft.reimbursementDate, { type: 'date' })}
       ${area('Catatan untuk pelanggan', 'messageNote', draft.messageNote, { placeholder: 'Tambahan untuk pesan ini', wide: true })}
     </div>`,
     ),
@@ -519,7 +544,7 @@ export function editor(type, draft, state) {
           <div class="preview-window">
             ${
               draft.editMessage
-                ? `<textarea id="message-editor" rows="12" aria-label="Edit pesan untuk pelanggan" spellcheck="false">${esc(draft.customMessage)}</textarea>`
+                ? `<textarea id="message-editor" rows="12" maxlength="${MAX_MESSAGE_LENGTH}" aria-label="Edit pesan untuk pelanggan" spellcheck="false">${esc(draft.customMessage)}</textarea>`
                 : '<pre id="message-preview" aria-label="Pesan untuk pelanggan"></pre>'
             }
           </div>
@@ -533,39 +558,53 @@ export function editor(type, draft, state) {
               ? 'Pesan ini menggunakan teks yang Anda ketik.'
               : `<label class="check-label"><input type="checkbox" data-draft="includeAccounts"${is(draft.includeAccounts)}> Sertakan data akun di pesan otomatis</label>`
           }</div>
-          ${isClaim ? '' : '<div class="calc" id="invoice-calc"></div>'}
+          <div class="calc-heading">Pembukuan internal</div>
+          <div class="calc" id="document-calc"></div>
           <div class="save-area">
             ${draft.id ? btn('Hapus', 'trash', 'delete-record', 'outline', `data-id="${esc(draft.id)}"`) : ''}
             <button class="btn btn-primary" type="submit" form="editor-form">${icon('save')}${isClaim ? 'Simpan klaim' : 'Simpan invoice'}</button>
           </div>
         </section>
-        <div class="banner compose-hint">${icon('lock')}<p>Riwayat menyimpan detail transaksi. Data dari kolom akun dan draf pesan hanya tersedia di sesi ini.</p></div>
+        <div class="banner compose-hint">${icon('lock')}<p>Setelah disimpan, detail akun dan pesan bisa dibuka lagi dari Riwayat.</p></div>
       </div>
     </div>`;
 }
 
-export function invoiceCalc(draft) {
+const calcValue = (name, value) =>
+  `<div class="calc-item"><span>${name}</span><strong class="${value < 0 ? 'negative' : ''}">${value === null ? 'Isi modal' : money(value)}</strong></div>`;
+
+export function invoiceCalc(draft, state) {
   const d = priceDetails(draft);
-  const profit = (name, value) =>
-    `<div class="calc-item"><span>${name}</span><strong class="${value < 0 ? 'negative' : ''}">${value === null ? 'Isi modal' : money(value)}</strong></div>`;
-  return `${profit('Total tagihan', d.total)}${profit('Modal total', d.cost)}
-    ${profit('Laba kotor', d.gross)}${profit('Laba bersih', d.net)}`;
+  const related = draft.id ? state.claims.filter((claim) => claim.invoiceId === draft.id) : [];
+  const impact = related.reduce((total, claim) => total + claimDetails(claim).net, 0);
+  return `${calcValue('Total tagihan', d.total)}${calcValue('Modal total', d.cost)}
+    ${calcValue('Laba kotor', d.gross)}${calcValue(related.length ? 'Laba sebelum klaim' : 'Laba bersih', d.net)}
+    ${related.length ? calcValue('Dampak klaim', impact) + calcValue('Laba setelah klaim', d.net === null ? null : d.net + impact) : ''}`;
+}
+
+export function claimCalc(detail) {
+  return `
+    ${calcValue('Modal akun pengganti', detail.quantity ? detail.accountCost : 0)}
+    ${calcValue('Total biaya klaim', detail.cost)}
+    ${calcValue('Kredit supplier', detail.credit)}
+    ${calcValue(detail.quantity && detail.unitCost === null ? 'Dampak laba sementara' : 'Dampak ke laba', detail.net)}`;
 }
 
 function claimRows(rows) {
   return `<div class="table-scroll"><table class="table responsive-table table-flat">
-    <thead><tr><th>Klaim</th><th>Tanggal</th><th>Invoice asal</th><th>Status</th><th class="num">Biaya bersih</th><th>Aksi</th></tr></thead>
+    <thead><tr><th>Klaim</th><th>Tanggal</th><th>Invoice asal</th><th>Status</th><th class="num">Dampak laba</th><th>Aksi</th></tr></thead>
     <tbody>${rows
-      .map(
-        (row) => `<tr>
-      <td><div class="row-main">${tile('shield')}<div><span class="row-id">${esc(row.number)}</span><small>${esc(row.customer || row.packageLabel)}</small></div></div></td>
+      .map((row) => {
+        const { net } = claimDetails(row);
+        return `<tr>
+      <td><div class="row-main">${tile('shield')}<div><span class="row-id">${esc(row.number)}</span><small>${esc(row.customer || row.packageLabel)}</small>${savedAccountCount(row)}</div></div></td>
       <td data-label="Tanggal">${formatDate(row.date)}</td>
       <td data-label="Invoice asal">${esc(row.invoiceNumber || '—')}</td>
       <td data-label="Status">${claimBadge(row)}</td>
-      <td class="num" data-label="Biaya bersih">${money(row.cost - row.reimbursement)}</td>
+      <td class="num ${net < 0 ? 'negative' : ''}" data-label="Dampak laba">${money(net)}</td>
       <td class="row-actions"><div class="row-tools">${iconButton('Buka klaim ' + row.number, 'edit', 'edit-claim', row.id)}</div></td>
-    </tr>`,
-      )
+    </tr>`;
+      })
       .join('')}</tbody></table></div>`;
 }
 
@@ -692,7 +731,7 @@ export function ledgerRows(report, ui) {
 }
 
 export function financeView(state, report, ui) {
-  const { totals: t, receivable, pending } = report;
+  const { totals: t, warranty, receivable, pending } = report;
   const line = (key, value, extra = '') =>
     `<div class="summary-line ${extra}"><span>${key}</span><strong>${money(value)}</strong></div>`;
   return `${pageHead(
@@ -713,6 +752,14 @@ export function financeView(state, report, ui) {
           </div>
         </section><div class="stack">
           ${packageCard(report, state, true)}
+          <section class="card">${headCard('Biaya klaim garansi', 'Rata-rata dihitung dari klaim yang merugi pada periode ini.')}
+            <div class="card-body summary-lines">
+              ${line('Total biaya penggantian', warranty.cost)}${line('Kredit supplier', warranty.credit)}
+              <div class="summary-line"><span>Klaim merugi</span><strong>${warranty.losses}</strong></div>
+              ${line('Rata-rata rugi per klaim', warranty.averageLoss, 'total')}
+              ${warranty.missing ? banner(`Modal pengganti belum diisi pada ${warranty.missing} klaim. Perhitungan rugi masih sementara.`, 'amber') : ''}
+            </div>
+          </section>
           <section class="card">${headCard('Piutang', `${pending} invoice menunggu pembayaran pada periode invoice ini.`)}
             <div class="card-body summary-lines">${line('Total belum dibayar', receivable, 'total')}</div>
           </section>
@@ -793,7 +840,8 @@ export function settingsView(draft, type) {
         ${field('Produk default', 'product', draft.product, { ...cfg, required: true })}
         ${field('Kontak admin', 'contact', draft.contact, { ...cfg, placeholder: 'WhatsApp atau email', limit: 120 })}
         ${area('Instruksi pembayaran', 'paymentInfo', draft.paymentInfo, { ...cfg, wide: true, limit: 700, placeholder: 'Tampil pada invoice menunggu pembayaran' })}
-        ${area('Panduan akses akun', 'loginGuide', draft.loginGuide, { ...cfg, wide: true, limit: 1600 })}
+        ${area('Panduan login pelanggan', 'loginGuide', draft.loginGuide, { ...cfg, wide: true, rows: 7, limit: 1600 })}
+        <div class="wide">${btn('Pakai panduan login bawaan', '', 'reset-login-guide', 'plain btn-sm')}</div>
         ${area('Aturan penggunaan akun', 'accountRules', draft.accountRules, { ...cfg, wide: true, limit: 1600 })}
         ${area('Ketentuan garansi', 'terms', draft.terms, { ...cfg, wide: true, limit: 2200, rows: 6 })}
       </div>`,
@@ -830,7 +878,7 @@ export function settingsView(draft, type) {
       </section>
       <section class="card wide">${headCard('Cadangan data', 'Unduh atau impor salinan pembukuan.')}
         <div class="card-body">
-          <p class="field-help">File cadangan berisi data keuangan, riwayat, dan pengaturan toko. Simpan di tempat yang hanya bisa Anda akses.</p>
+          <p class="field-help">File cadangan berisi data keuangan, riwayat, dan pengaturan toko. Detail akun tetap tersimpan terenkripsi di pembukuan.</p>
           <div class="actions" style="margin-top:10px">
             ${btn('Unduh backup', 'download', 'export-backup')}${btn('Impor backup', 'upload', 'import-backup')}</div>
         </div>
